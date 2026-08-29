@@ -112,26 +112,25 @@ class ImageDetailDialog(QDialog):
         layout.setSpacing(15)
         layout.setContentsMargins(20, 20, 20, 20)
 
-        # Загрузка и увеличение изображения
-        sprite_path = f"{item.get("path", "")}/{item.get("state", "")}.png"
-        pixmap = QPixmap()
-        if sprite_path and os.path.exists(sprite_path):
-            pixmap.load(sprite_path)
-            # Масштабируем до 256x256 с сохранением пропорций
-            pixmap = pixmap.scaled(
-                256, 256,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.FastTransformation
-            )
-        else:
-            pixmap = QPixmap(256, 256)
-            pixmap.fill(QColor("#ff00ff"))
+        # --- Кнопка с QMenu над картинкой ---
+        self.btn_state = QPushButton()
+        self.btn_state.setStyleSheet(btn_style)
+        
+        # Список состояний берётся из item['states'] (или текущий state по умолчанию)
+        states = self.item.get("states", [self.item.get("state", "default")])
+        state_menu = QMenu(self)
+        
+        for state in states:
+            # Передаём s=state в lambda, чтобы зафиксировать значение переменной в цикле
+            state_menu.addAction(str(state), lambda s=state: self.change_state(s))
 
-        # Виджет увеличенного изображения
-        img_label = QLabel()
-        img_label.setPixmap(pixmap)
-        img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(img_label)
+        self.btn_state.setMenu(state_menu)
+        layout.addWidget(self.btn_state)
+
+        # --- Виджет изображения ---
+        self.img_label = QLabel()
+        self.img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.img_label)
 
         # Заголовок / Идентификатор
         title_label = QLabel(item.get("id", "Без названия"))
@@ -139,13 +138,16 @@ class ImageDetailDialog(QDialog):
         title_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
         layout.addWidget(title_label)
 
-        # Дополнительная информация (путь)
-        width, height = ToIMAGE.info_size_image(f"{item.get("path", "")}/{item.get("state", "")}.png")
-        path_label = QLabel(f"Путь: {sprite_path}\n\nИгровой размер: {item.get("size").get("x")}x{item.get("size").get("y")}\nРазмер картинки: {width}x{height}")
-        path_label.setWordWrap(True)
-        path_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        path_label.setStyleSheet("color: #666666;")
-        layout.addWidget(path_label)
+        # --- Дополнительная информация ---
+        self.path_label = QLabel()
+        self.path_label.setWordWrap(True)
+        self.path_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.path_label.setStyleSheet("color: #666666;")
+        layout.addWidget(self.path_label)
+
+        # Установка начального состояния
+        current_state = self.item.get("state") or (states[0] if states else "")
+        self.change_state(current_state)
 
         # Растяжка перед кнопками
         layout.addStretch()
@@ -178,11 +180,8 @@ class ImageDetailDialog(QDialog):
         img_menu.addAction("1. Original", lambda: self.process_image_with_mode("Original"))
         img_menu.addAction("2. Resize", lambda: self.process_image_with_mode("Resize"))
         img_menu.addAction("3. South", lambda: self.process_image_with_mode("South"))
-
-        # Привязываем меню к кнопке
         btn_img.setMenu(img_menu)
 
-        # Подключение событий
         btn_yml.clicked.connect(self.on_yml_clicked)
         btn_rsi.clicked.connect(self.on_rsi_clicked)
         btn_gif.clicked.connect(self.on_gif_clicked)
@@ -193,11 +192,40 @@ class ImageDetailDialog(QDialog):
 
         # Главный слой
         main_btn_layout = QHBoxLayout()
-
         main_btn_layout.addWidget(group_links)
         main_btn_layout.addWidget(group_btns)
 
         layout.addLayout(main_btn_layout)
+
+    def change_state(self, new_state: str):
+        """Обновляет состояние, перерисовывает изображение и тексты."""
+        self.item["state"] = new_state
+        self.btn_state.setText(f"State: {new_state}")
+
+        sprite_path = f"{self.item.get('path', '')}/{new_state}.png"
+        
+        pixmap = QPixmap()
+        if sprite_path and os.path.exists(sprite_path):
+            pixmap.load(sprite_path)
+            pixmap = pixmap.scaled(
+                256, 256,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.FastTransformation
+            )
+            width, height = ToIMAGE.info_size_image(sprite_path)
+        else:
+            pixmap = QPixmap(256, 256)
+            pixmap.fill(QColor("#ff00ff"))
+            width, height = 0, 0
+
+        self.img_label.setPixmap(pixmap)
+        
+        game_size = self.item.get("size", {})
+        self.path_label.setText(
+            f"Путь: {sprite_path}\n\n"
+            f"Игровой размер: {game_size.get('x', 0)}x{game_size.get('y', 0)}\n"
+            f"Размер картинки: {width}x{height}"
+        )
 
     def on_yml_clicked(self):
         """Открывает .yml файл картинки (item)"""
@@ -227,7 +255,7 @@ class ImageDetailDialog(QDialog):
 
     def process_image_with_mode(self, mode: str):
         image_path = Path(f"{self.item.get('path', '')}/{self.item.get('state', '')}.png")
-        image_name = self.item.get("id", "")
+        image_name = f"{self.item.get("id", "")}-{self.item.get("state", "")}"
         print(f"Обработка с режимом: {mode}")
         ToIMAGE.process_path(image_path, image_name, mode=mode)
 

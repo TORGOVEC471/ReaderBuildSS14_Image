@@ -25,7 +25,8 @@ def save_data_build(TARGET_DIR):
                 state_value = entity.get('state')
 
                 # Если state равен None, получаем его из meta.json
-                meta_path = path_build + dir_textures + entity['sprite'].removeprefix("/Textures/") + "/meta.json"
+                rsi_path = path_build + dir_textures + entity['sprite'].removeprefix("/Textures/")
+                meta_path = rsi_path + "/meta.json"
                 if state_value is None:
                     state_value = process_meta(meta_path)
 
@@ -42,6 +43,7 @@ def save_data_build(TARGET_DIR):
                     "sprite": entity['sprite'],
                     "path": path_build + dir_textures + entity['sprite'].removeprefix("/Textures/"),
                     "state": state_value,
+                    "states": get_states(rsi_path),
                     "size": size
                     },
                     )
@@ -73,6 +75,19 @@ def process_meta(directory_path) -> None:
         except Exception as e:
             print(f"[ERROR] Ошибка при чтении {root_dir}: {e}")
             return None
+
+def get_states(directory_path : str | Path) -> list[Path]:
+    """Возвращает список всех .png файлов в папке .rsi"""
+    rsi_dir = Path(directory_path)
+
+    if not rsi_dir.is_dir():
+        print(f"[ERROR] Указанный путь не является директорией: {rsi_dir}")
+        return []
+
+    # Получаем все .png файлы в папке
+    png_files = [file.stem for file in rsi_dir.glob("*.png") if file.is_file()]
+
+    return png_files
 
 # --- Пример использования ---
 if __name__ == "__main__":

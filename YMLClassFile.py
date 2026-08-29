@@ -34,6 +34,8 @@ def extract_id_and_sprites(data):
         if not entity_id:
             continue
 
+        # родитель пока не исппользуется
+        sprite_parent = None
         sprite_path = None
         sprite_state = None
         sprite_layers = None
@@ -43,6 +45,7 @@ def extract_id_and_sprites(data):
         if isinstance(components, list):
             for comp in components:
                 if isinstance(comp, dict) and comp.get('type') == 'Sprite':
+                    sprite_parent = comp.get('parent')
                     sprite_path = comp.get('sprite')
                     sprite_state = comp.get('state')
                     sprite_layers = comp.get('layers')
