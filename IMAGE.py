@@ -86,10 +86,21 @@ def save_sprite(png_path: Path | str, output_name: str = None, mode: str = "Orig
             if copyright_data or license_data:
                 metadata.add_text("Copyright", f"{copyright_data} License: {license_data}")
 
-            if mode == "South":
-                # Если есть directions — обрезаем до первого направления (первого кадра)
+            if mode == "South": # лицо
                 if has_directions:
                     image = image.crop((0, 0, tile_w, tile_h))
+            if mode == "North": # спина
+                # Если есть directions — обрезаем до первого направления (первого кадра)
+                if has_directions:
+                    image = image.crop((tile_w, 0, tile_w*2, tile_h))
+            if mode == "East": # правый профиль
+                # Если есть directions — обрезаем до первого направления (первого кадра)
+                if has_directions:
+                    image = image.crop((0, tile_h, tile_w, tile_h*2))
+            if mode == "West": # левый профиль
+                # Если есть directions — обрезаем до первого направления (первого кадра)
+                if has_directions:
+                    image = image.crop((tile_w, tile_h, tile_w*2, tile_h*2))
 
             if mode == "Original":
                 SCALE_FACTOR = 1

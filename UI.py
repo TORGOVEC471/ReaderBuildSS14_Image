@@ -179,7 +179,10 @@ class ImageDetailDialog(QDialog):
         img_menu = QMenu(self)
         img_menu.addAction("1. Original", lambda: self.process_image_with_mode("Original"))
         img_menu.addAction("2. Resize", lambda: self.process_image_with_mode("Resize"))
-        img_menu.addAction("3. South", lambda: self.process_image_with_mode("South"))
+        img_menu.addAction("3.1 South (лицо)", lambda: self.process_image_with_mode("South"))
+        img_menu.addAction("3.2 North (зад)", lambda: self.process_image_with_mode("North"))
+        img_menu.addAction("3.3 East (правый профиль)", lambda: self.process_image_with_mode("East"))
+        img_menu.addAction("3.4 West (левый профиль)", lambda: self.process_image_with_mode("West"))
         btn_img.setMenu(img_menu)
 
         btn_yml.clicked.connect(self.on_yml_clicked)
