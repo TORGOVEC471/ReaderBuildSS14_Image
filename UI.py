@@ -222,12 +222,36 @@ class ImageDetailDialog(QDialog):
             width, height = 0, 0
 
         self.img_label.setPixmap(pixmap)
+
+        # 1. Извлекаем суффиксы и родителей
+        suffix = self.item.get("suffix")
+        suffix_ftl = self.item.get("suffix_ftl")
+        parent = self.item.get('parent')
+        parents_chain = self.item.get('parents_chain')
+
+        # 2. Формируем текст только если хотя бы один суффикс не пуст
+        if suffix or suffix_ftl:
+            suffix_text = f"<b>Суффиксы:</b><br> - {suffix or []}<br> - {suffix_ftl or []}<br><br>"
+        else:
+            suffix_text = "<br>"
+
+        if parent or parents_chain:
+            parent_text = f"<b>Родитель:</b> {self.item.get('parent')}<br>"
+            parents_text = f"<b>Цепочка родителей:</b> {self.item.get('parents_chain')}<br>"
+        else:
+            parent_text = ""
+            parents_text = ""
         
         game_size = self.item.get("size", {})
         self.path_label.setText(
-            f"Путь: {sprite_path}\n\n"
-            f"Игровой размер: {game_size.get('x', 0)}x{game_size.get('y', 0)}\n"
-            f"Размер картинки: {width}x{height}"
+            f"<b>Название:</b> {self.item.get('name_ftl', '')}<br>"
+            f"<b>Описание:</b> {self.item.get('desc_ftl', '')}<br>"
+            f"{suffix_text}"
+            f"<b>Путь:</b> {sprite_path}<br><br>"
+            f"<b>Игровой размер:</b> {game_size.get('x', 0)}x{game_size.get('y', 0)}<br>"
+            f"<b>Размер картинки:</b> {width}x{height}<br><br>"
+            f"{parent_text}"
+            f"{parents_text}"
         )
 
     def on_yml_clicked(self):
@@ -528,7 +552,13 @@ class MainWindow(QMainWindow):
             # Ищем совпадения по названию карточки (title) ИЛИ по имени файла (path)
             self.filtered_items = [
                 item for item in items
-                if query in str(item.get("id", "")).lower() or query in os.path.basename(item.get("path", "")).lower()
+                if query in str(item.get("id", "")).lower()
+                or query in str(item.get("name_ftl", "")).lower()
+                or query in os.path.basename(item.get("path", "")).lower()
+                or query.lower() in [x.lower() for x in item.get("suffix", [])]
+                or any(query.lower() in x.lower() for x in (item.get("suffix_ftl") or []) if isinstance(x, str))
+                # or query in str(item.get("parent", "")).lower() # Возможно в будущем  будет фильтр для поиска по родителям
+                # or query.lower() in [x.lower() for x in item.get("parents_chain", [])]
             ]
 
         self.reset_and_render()

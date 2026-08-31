@@ -2,6 +2,7 @@ import YMLClassFile as YMLF
 import json
 import configparser
 from pathlib import Path
+import FTLReader as FTLR
 
 config = configparser.ConfigParser()
 config.read("settings.ini", encoding="utf-8")
@@ -10,11 +11,14 @@ path_build = config["General"]["path_build"]
 
 dir_textures = '/Resources/Textures/'
 dir_prototypes = '/Resources/Prototypes/'
+dir_ftl_RU = '/Resources/Locale/ru-RU/ss14-ru'
 list_SpriteID = []
-TARGET_DIR = f"{path_build+dir_prototypes}"
+TARGET_DIR_YML = f"{path_build+dir_prototypes}"
+TARGET_DIR_FTL = f"{path_build+dir_ftl_RU}"
 
-def save_data_build(TARGET_DIR):
-    parsed_data = YMLF.process_prototypes(TARGET_DIR)
+def save_data_build(TARGET_DIR_YML, TARGET_DIR_FTL):
+    parsed_data = YMLF.process_prototypes(TARGET_DIR_YML)
+    parsed_ftl = FTLR.load_ftl_directory(TARGET_DIR_FTL)
 
     # Вывод результатов
     for file_name, entities in parsed_data.items():
@@ -37,9 +41,35 @@ def save_data_build(TARGET_DIR):
                 except Exception as e:
                     print(f"[WARN] Failed to read metadata from {meta_path}: {e}")
 
+                ftl_key = f"ent-{entity['id']}"
+                local_info = parsed_ftl.get(ftl_key, {})
+
+                name_ftl = local_info.get('name')
+                desc_ftl = local_info.get('desc')
+                suffix_ftl = local_info.get('suffix')
+
+                # Фоллбэк: если своего FTL нет, пробуем подтянуть name/desc из родителей
+                if (not name_ftl or not desc_ftl) and entity.get('parents_chain'):
+                    for parent_id in entity['parents_chain']:
+                        parent_key = f"ent-{parent_id}"
+                        if parent_key in parsed_ftl:
+                            p_info = parsed_ftl[parent_key]
+                            if not name_ftl:
+                                name_ftl = p_info.get('name')
+                            if not desc_ftl:
+                                desc_ftl = p_info.get('desc')
+                            if name_ftl and desc_ftl:
+                                break
+
                 list_SpriteID.append({
                     "file": file_name.replace("\\", "/"),
                     "id": entity['id'],
+                    "name_ftl": name_ftl,
+                    "desc_ftl": desc_ftl,
+                    "suffix_ftl": suffix_ftl,
+                    "suffix": entity.get('suffix'),
+                    "parent": entity.get("parent"),
+                    "parents_chain": entity.get('parents_chain'),
                     "sprite": entity['sprite'],
                     "path": path_build + dir_textures + entity['sprite'].removeprefix("/Textures/"),
                     "state": state_value,
@@ -91,4 +121,4 @@ def get_states(directory_path : str | Path) -> list[Path]:
 
 # --- Пример использования ---
 if __name__ == "__main__":
-    save_data_build(TARGET_DIR)
+    save_data_build(TARGET_DIR_YML, TARGET_DIR_FTL)
