@@ -151,7 +151,8 @@ def process_prototypes(directory_path):
                 content = yaml.load(f, Loader=SS14YamlLoader)
                 if isinstance(content, list):
                     for item in content:
-                        if isinstance(item, dict) and item.get('id'):
+                        # Добавляем проверку на type == 'entity'
+                        if isinstance(item, dict) and item.get('type') == 'entity' and item.get('id'):
                             entities_db[item['id']] = {
                                 'file': str(file_path),
                                 'raw': item

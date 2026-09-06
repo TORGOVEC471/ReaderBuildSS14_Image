@@ -94,7 +94,9 @@ class SaveDataThread(QThread):
 
     def run(self):
         # Эта функция теперь выполняется в фоновом потоке и не замораживает UI
-        WrtData.save_data_build(f"{self.path_build}/Resources/Prototypes/")
+        TARGET_DIR_YML = f"{self.path_build}/Resources/Prototypes/"
+        TARGET_DIR_FTL = f"{self.path_build}/Resources/Locale/ru-RU/ss14-ru"
+        WrtData.save_data_build(TARGET_DIR_YML, TARGET_DIR_FTL)
         self.finished_signal.emit()
 
 
@@ -420,7 +422,7 @@ class SettingsDialog(QDialog):
         reply = QMessageBox.question(
             self,
             "Подтверждение",
-            "Вы действительно хотите продолжить?\nЗагрузка может длиться вплоть до 2-х минут!",
+            "Вы действительно хотите продолжить?\nЗагрузка может длиться вплоть до 2-х и более минут!",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
