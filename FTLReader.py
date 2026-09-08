@@ -28,8 +28,9 @@ def parse_ftl_file(file_path):
                     val_str = val_part.strip()
 
                     if attr_name == 'suffix':
-                        # Разделяем по запятой, убираем пробелы и возможные кавычки
-                        suffixes = [s.strip().strip('"\'') for s in val_str.split(',') if s.strip()]
+                        # Удаляем фигурные скобки, кавычки и пробелы
+                        cleaned_val = val_str.strip('{} ').strip('"\'')
+                        suffixes = [s.strip().strip('"\'') for s in cleaned_val.split(',') if s.strip()]
                         ftl_data[current_id][attr_name] = suffixes
                     else:
                         ftl_data[current_id][attr_name] = val_str
@@ -112,8 +113,7 @@ def load_ftl_directory(directory_path):
     return resolve_ftl_references(combined_raw_db)
 
 if __name__ == "__main__":
-    # dir = "C:/Users/Илья/Desktop/ADT_GIT/space_station_ADT/Resources/Locale/ru-RU/ss14-ru"
-    dir = "C:/Users/Илья/Desktop/ADT_GIT/space_station_ADT/Resources/Locale/ru-RU/ss14-ru/prototypes/entities/objects/devices"
+    dir = "Dir/To/Test"
     ftl_db = load_ftl_directory(dir)
     print(ftl_db)
     print("-----")

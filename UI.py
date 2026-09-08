@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QScrollArea,
     QGridLayout, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QPushButton, QLineEdit, QDialog, QGroupBox, QDialogButtonBox,
-    QFileDialog, QMessageBox, QMenu
+    QFileDialog, QMessageBox, QMenu, QCheckBox
 )
 from PyQt6.QtGui import QPixmap, QColor, QFont, QDesktopServices, QPainter
 from PyQt6.QtCore import Qt, pyqtSignal, QUrl, QSettings, QThread
@@ -95,7 +95,7 @@ class SaveDataThread(QThread):
     def run(self):
         # Эта функция теперь выполняется в фоновом потоке и не замораживает UI
         TARGET_DIR_YML = f"{self.path_build}/Resources/Prototypes/"
-        TARGET_DIR_FTL = f"{self.path_build}/Resources/Locale/ru-RU/ss14-ru"
+        TARGET_DIR_FTL = f"{self.path_build}/Resources/Locale/ru-RU"
         WrtData.save_data_build(TARGET_DIR_YML, TARGET_DIR_FTL)
         self.finished_signal.emit()
 
@@ -114,20 +114,27 @@ class ImageDetailDialog(QDialog):
         layout.setSpacing(15)
         layout.setContentsMargins(20, 20, 20, 20)
 
-        # --- Кнопка с QMenu над картинкой ---
+        # --- Верхний макет: Кнопка состояний + Галочка "Сборщик" ---
+        top_layout = QHBoxLayout()
+
         self.btn_state = QPushButton()
         self.btn_state.setStyleSheet(btn_style)
         
-        # Список состояний берётся из item['states'] (или текущий state по умолчанию)
         states = self.item.get("states", [self.item.get("state", "default")])
         state_menu = QMenu(self)
-        
         for state in states:
-            # Передаём s=state в lambda, чтобы зафиксировать значение переменной в цикле
             state_menu.addAction(str(state), lambda s=state: self.change_state(s))
 
         self.btn_state.setMenu(state_menu)
-        layout.addWidget(self.btn_state)
+        top_layout.addWidget(self.btn_state)
+
+        # Галочка переключения режима Сборщика
+        self.cb_builder = QCheckBox("Сборщик")
+        # При переключении галочки сразу обновляем отображение
+        self.cb_builder.toggled.connect(lambda: self.change_state(self.item.get("state", "")))
+        top_layout.addWidget(self.cb_builder)
+
+        layout.addLayout(top_layout)
 
         # --- Виджет изображения ---
         self.img_label = QLabel()
@@ -202,79 +209,164 @@ class ImageDetailDialog(QDialog):
 
         layout.addLayout(main_btn_layout)
 
-    def change_state(self, new_state: str):
-        """Обновляет состояние, перерисовывает изображение и тексты."""
-        self.item["state"] = new_state
-        self.btn_state.setText(f"State: {new_state}")
+    def apply_layer_color(self, pixmap: QPixmap, color_hex: str) -> QPixmap:
+        """Накладывает цвет (tint) на изображение с сохранением альфа-канала."""
+        result = QPixmap(pixmap.size())
+        result.fill(Qt.GlobalColor.transparent)
 
-        sprite_path = f"{self.item.get('path', '')}/{new_state}.png"
+        painter = QPainter(result)
+        painter.drawPixmap(0, 0, pixmap)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        painter.fillRect(result.rect(), QColor(color_hex))
+        painter.end()
+
+        return result
+
+    def render_single_image(self, state_name: str) -> tuple[QPixmap, int, int]:
+        """Отрисовывает обычное (одиночное) изображение без слоёв."""
+        sprite_path = f"{self.item.get('path', '')}/{state_name}.png"
         
         pixmap = QPixmap()
         if sprite_path and os.path.exists(sprite_path):
             pixmap.load(sprite_path)
+            width, height = pixmap.width(), pixmap.height()
             pixmap = pixmap.scaled(
                 256, 256,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.FastTransformation
             )
-            width, height = ToIMAGE.info_size_image(sprite_path)
         else:
+            # Заглушка, если файла нет
             pixmap = QPixmap(256, 256)
             pixmap.fill(QColor("#ff00ff"))
             width, height = 0, 0
 
+        return pixmap, width, height
+
+    def render_composite_image(self) -> QPixmap:
+        """Собирает слои на базовом холсте с автоцентрированием слоёв и учётом offset."""
+        # 1. Получаем нативный игровой размер спрайта (по умолчанию 32x32)
+        native_w = self.item.get("size", {}).get("x", 32) or 32
+        native_h = self.item.get("size", {}).get("y", 32) or 32
+
+        # 2. Создаём промежуточный буфер нативного размера
+        native_pixmap = QPixmap(native_w, native_h)
+        native_pixmap.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(native_pixmap)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+
+        layers = self.item.get("layers", [])
+
+        file_path = Path(self.item.get("file", ""))
+        resources_dir = next((p for p in file_path.parents if p.name == "Resources"), None)
+
+        if resources_dir:
+            base_textures_path = resources_dir / "Textures"
+
+            for layer in layers:
+                state_name = layer.get("state")
+                sprite_rel_path = layer.get("sprite")
+
+                if sprite_rel_path:
+                    layer_dir = base_textures_path / sprite_rel_path
+                else:
+                    layer_dir = Path(self.item.get("path", ""))
+
+                layer_file_path = layer_dir / f"{state_name}.png" if state_name else layer_dir
+
+                if not layer_file_path.exists() or layer_file_path.is_dir():
+                    continue
+
+                layer_pixmap = QPixmap(str(layer_file_path))
+
+                # Применение цвета (tint)
+                if "color" in layer and layer["color"]:
+                    layer_pixmap = self.apply_layer_color(layer_pixmap, layer["color"])
+
+                # --- 3. Центрирование слоя относительно холста ---
+                layer_w = layer_pixmap.width()
+                layer_h = layer_pixmap.height()
+
+                center_x = (native_w - layer_w) // 2
+                center_y = (native_h - layer_h) // 2
+
+                # --- 4. Расчёт смещения (offset) ---
+                offset_x, offset_y = 0, 0
+                if "offset" in layer and layer["offset"]:
+                    try:
+                        parts = [float(p.strip()) for p in str(layer["offset"]).split(",")]
+                        if len(parts) == 2:
+                            offset_x = int(round(parts[0] * native_w))
+                            # Ось Y в движке SS14 инвертирована относительно Qt
+                            offset_y = int(round(-parts[1] * native_h))
+                    except ValueError:
+                        pass
+
+                # Итоговые координаты отрисовки
+                final_x = center_x + offset_x
+                final_y = center_y + offset_y
+
+                painter.drawPixmap(final_x, final_y, layer_pixmap)
+
+        painter.end()
+
+        # Масштабируем готовое изображение до размера UI (256x256)
+        display_size = 256
+        return native_pixmap.scaled(
+            display_size, display_size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.FastTransformation
+        )
+
+    def change_state(self, new_state: str):
+        """Обновляет состояние и выбирает режим отрисовки в зависимости от галочки."""
+        self.item["state"] = new_state
+        self.btn_state.setText(f"State: {new_state}")
+
+        # --- Проверка режима "Сборщик" ---
+        if self.cb_builder.isChecked():
+            pixmap = self.render_composite_image()
+            img_w, img_h = 256, 256
+        else:
+            pixmap, img_w, img_h = self.render_single_image(new_state)
+
         self.img_label.setPixmap(pixmap)
 
-        # 1. Извлекаем суффиксы и родителей
+        # Вывод метаинформации
+        sprite_path = f"{self.item.get('path', '')}/{new_state}.png"
+        width = self.item.get("size", {}).get("x", 0)
+        height = self.item.get("size", {}).get("y", 0)
+
         suffix = self.item.get("suffix")
         suffix_ftl = self.item.get("suffix_ftl")
         parent = self.item.get('parent')
         parents_chain = self.item.get('parents_chain')
 
-        # 2. Формируем текст только если хотя бы один суффикс не пуст
-        if suffix or suffix_ftl:
-            suffix_text = f"<b>Суффиксы:</b><br> - {suffix or []}<br> - {suffix_ftl or []}<br><br>"
-        else:
-            suffix_text = "<br>"
+        suffix_text = f"<b>Суффиксы:</b><br> - {suffix or []}<br> - {suffix_ftl or []}<br><br>" if (suffix or suffix_ftl) else "<br>"
+        parent_text = f"<b>Родитель:</b> {parent}<br>" if parent else ""
+        parents_text = f"<b>Цепочка родителей:</b> {parents_chain}<br>" if parents_chain else ""
 
-        if parent or parents_chain:
-            parent_text = f"<b>Родитель:</b> {self.item.get('parent')}<br>"
-            parents_text = f"<b>Цепочка родителей:</b> {self.item.get('parents_chain')}<br>"
-        else:
-            parent_text = ""
-            parents_text = ""
-        
-        game_size = self.item.get("size", {})
         self.path_label.setText(
             f"<b>Название:</b> {self.item.get('name_ftl', '')}<br>"
             f"<b>Описание:</b> {self.item.get('desc_ftl', '')}<br>"
             f"{suffix_text}"
             f"<b>Путь:</b> {sprite_path}<br><br>"
-            f"<b>Игровой размер:</b> {game_size.get('x', 0)}x{game_size.get('y', 0)}<br>"
-            f"<b>Размер картинки:</b> {width}x{height}<br><br>"
+            f"<b>Игровой размер:</b> {width}x{height}<br>"
+            f"<b>Размер файла:</b> {img_w}x{img_h}<br><br>"
             f"{parent_text}"
             f"{parents_text}"
         )
 
     def on_yml_clicked(self):
-        """Открывает .yml файл картинки (item)"""
         url = QUrl.fromLocalFile(self.item.get("file", ""))
         if url:
-            # Открываем системным приложением
-            print("Открываем YML!")
             QDesktopServices.openUrl(url)
-        else:
-            print(f"Неверная ссылка: {url}")
 
     def on_rsi_clicked(self):
-        """Открывает папку .rsi картинки (item)"""
-        url = QUrl.fromLocalFile(f"{self.item.get("path", "")}")
+        url = QUrl.fromLocalFile(f"{self.item.get('path', '')}")
         if url:
-            # Открываем системным приложением
-            print("Открываем RSI!")
             QDesktopServices.openUrl(url)
-        else:
-            print(f"Неверная ссылка: {url}")
 
     def on_gif_clicked(self):
         json_path = Path(self.item.get("path", "")) / "meta.json"
@@ -284,8 +376,7 @@ class ImageDetailDialog(QDialog):
 
     def process_image_with_mode(self, mode: str):
         image_path = Path(f"{self.item.get('path', '')}/{self.item.get('state', '')}.png")
-        image_name = f"{self.item.get("id", "")}-{self.item.get("state", "")}"
-        print(f"Обработка с режимом: {mode}")
+        image_name = f"{self.item.get('id', '')}-{self.item.get('state', '')}"
         ToIMAGE.process_path(image_path, image_name, mode=mode)
 
 

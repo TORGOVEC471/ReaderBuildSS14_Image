@@ -11,7 +11,7 @@ path_build = config["General"]["path_build"]
 
 dir_textures = '/Resources/Textures/'
 dir_prototypes = '/Resources/Prototypes/'
-dir_ftl_RU = '/Resources/Locale/ru-RU/ss14-ru'
+dir_ftl_RU = '/Resources/Locale/ru-RU'
 list_SpriteID = []
 TARGET_DIR_YML = f"{path_build+dir_prototypes}"
 TARGET_DIR_FTL = f"{path_build+dir_ftl_RU}"
@@ -74,6 +74,7 @@ def save_data_build(TARGET_DIR_YML, TARGET_DIR_FTL):
                     "path": path_build + dir_textures + entity['sprite'].removeprefix("/Textures/"),
                     "state": state_value,
                     "states": get_states(rsi_path),
+                    "layers": entity.get('layers'),
                     "size": size
                     },
                     )
