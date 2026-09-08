@@ -15,6 +15,7 @@ import IMAGE as ToIMAGE
 from pathlib import Path
 import WriterData as WrtData
 
+# Тест
 # Открываем файл на чтение ('r') с указанием кодировки utf-8
 try:
     with open("data.json", "r", encoding="utf-8") as file:
