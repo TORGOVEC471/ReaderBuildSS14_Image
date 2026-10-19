@@ -8,6 +8,8 @@ from chardet import UniversalDetector
 from PIL import Image
 import configparser
 
+from typing import Literal
+
 # Настройки
 config = configparser.ConfigParser()
 
@@ -32,7 +34,7 @@ path_saves = config["General"]["path_Saves"]
 OUTPUT_DIR = Path(path_saves).parent / "Saves/animations"
 if not OUTPUT_DIR.exists():
     OUTPUT_DIR.mkdir(parents=True)
-elif OUTPUT_DIR == ".":
+elif OUTPUT_DIR == Path("."):
     OUTPUT_DIR = Path(__file__).parent / "Saves/animations"
 
 # Путь по умолчанию (если не переданы аргументы при запуске)
@@ -68,7 +70,8 @@ def save_anim(
         tile_h: int, #N
         delays: list,
         image_copyright: str,
-        image_license: str
+        image_license: str,
+        format: Literal["gif", "webp"] = "gif"
     ) -> Path:
     if isinstance(sprite, Image.Image):
         raw_img = np.array(sprite)
@@ -105,31 +108,49 @@ def save_anim(
         print(f"[WARN] No frames created for {name}")
         return
 
-    metadata_text = f"{name} - {image_copyright} License: {image_license}"
-    output_filepath = OUTPUT_DIR / f"{name}.gif"
+    metadata_text = f"{name}\n{image_copyright} License: {image_license}"
     
     # Pillow принимает время кадра в миллисекундах (0.2 сек -> 200 мс)
     durations_ms = [int(d * 1000) if d < 10 else int(d) for d in delays[:len(frames)]]
 
-    try:
-        print(f"[INFO] Saving {output_filepath}")
-        frames[0].save(
-            output_filepath,
-            format='GIF',
-            optimize=True,
-            append_images=frames[1:],
-            disposal=2,
-            save_all=True,
-            duration=durations_ms,
-            loop=0,
-            comment=metadata_text
-        )
-        return output_filepath
-    except Exception as e:
-        print(f"[ERROR] {e}")
+    if format == "gif":
+        output_filepath = OUTPUT_DIR / f"{name}.gif"
+        try:
+            print(f"[INFO] Saving {output_filepath}")
+            frames[0].save(
+                output_filepath,
+                format='GIF',
+                optimize=True,
+                append_images=frames[1:],
+                disposal=2,
+                save_all=True,
+                duration=durations_ms,
+                loop=0,
+                comment=metadata_text
+            )
+            return output_filepath
+        except Exception as e:
+            print(f"[ERROR] {e}")
+    elif format == "webp":
+        output_filepath = OUTPUT_DIR / f"{name}.webp" # Расширение .webp вместо .gif
+        try:
+            print(f"[INFO] Saving {output_filepath}")
+            frames[0].save(
+                output_filepath,
+                format='WEBP',
+                lossless=True,          # Без потерь качества для пиксель-арта
+                append_images=frames[1:],
+                save_all=True,
+                duration=durations_ms,
+                loop=0,
+                comment=metadata_text
+            )
+            return output_filepath
+        except Exception as e:
+            print(f"[ERROR] {e}")
 
 
-def process_json_file(json_file: Path | str, target_state: str = None, name_file: str = "") -> None:
+def process_json_file(json_file: Path | str, target_state: str = None, name_file: str = "", format: Literal["gif", "webp"] = "gif") -> None:
     """
     Обрабатывает один конкретный .json файл.
     Если передан target_state, обрабатывает ТОЛЬКО это состояние.
@@ -175,6 +196,7 @@ def process_json_file(json_file: Path | str, target_state: str = None, name_file
                 tile_h=tile_height,
                 image_copyright=copyright_data,
                 image_license=license_data,
+                format=format
             )
 
 

@@ -4,10 +4,10 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QScrollArea,
     QGridLayout, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QPushButton, QLineEdit, QDialog, QGroupBox, QDialogButtonBox,
-    QFileDialog, QMessageBox, QMenu, QCheckBox
+    QFileDialog, QMessageBox, QMenu, QCheckBox, QWidgetAction, QSpinBox
 )
 from PyQt6.QtGui import QPixmap, QColor, QFont, QDesktopServices, QPainter
-from PyQt6.QtCore import Qt, pyqtSignal, QUrl, QSettings, QThread
+from PyQt6.QtCore import Qt, pyqtSignal, QUrl, QSettings, QThread, QPoint
 import json
 import configparser
 import GIF as ToGIF
@@ -107,14 +107,25 @@ class ImageDetailDialog(QDialog):
         super().__init__(parent)
         self.item = item
         self.setWindowTitle(f"Просмотр: {item.get('id', 'Элемент')}")
-        self.setMinimumSize(400, 450)
+        self.setMinimumSize(400, 500)
         
+        # Инициализация конфигурации слоев (видимость и текущий кадр)
+        self.layer_configs = []
+        for layer in self.item.get("layers", []):
+            # Если в YAML явно указано visible: false, по умолчанию выключаем слой
+            default_visible = layer.get("visible", True)
+            self.layer_configs.append({
+                "layer": layer,
+                "enabled": default_visible,
+                "frame": 0
+            })
+
         # Основной макет окна
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
         layout.setContentsMargins(20, 20, 20, 20)
 
-        # --- Верхний макет: Кнопка состояний + Галочка "Сборщик" ---
+        # --- Верхний макет: Кнопка состояний + Галочка "Сборщик" + Кнопка слоев ---
         top_layout = QHBoxLayout()
 
         self.btn_state = QPushButton()
@@ -130,9 +141,15 @@ class ImageDetailDialog(QDialog):
 
         # Галочка переключения режима Сборщика
         self.cb_builder = QCheckBox("Сборщик")
-        # При переключении галочки сразу обновляем отображение
-        self.cb_builder.toggled.connect(lambda: self.change_state(self.item.get("state", "")))
+        self.cb_builder.toggled.connect(self.on_builder_toggled)
         top_layout.addWidget(self.cb_builder)
+
+        # Кнопка настройки слоев (активна только в режиме Сборщик)
+        self.btn_layers = QPushButton("⚙ Слои")
+        self.btn_layers.setStyleSheet(btn_style)
+        self.btn_layers.setVisible(False)
+        self.btn_layers.clicked.connect(self.show_layers_menu)
+        top_layout.addWidget(self.btn_layers)
 
         layout.addLayout(top_layout)
 
@@ -182,8 +199,10 @@ class ImageDetailDialog(QDialog):
 
         btn_img = QPushButton("IMG")
         btn_gif = QPushButton("GIF")
+        btn_webp = QPushButton("WebP")
         btn_img.setStyleSheet(btn_style)
         btn_gif.setStyleSheet(btn_style)
+        btn_webp.setStyleSheet(btn_style)
 
         img_menu = QMenu(self)
         img_menu.addAction("1. Original", lambda: self.process_image_with_mode("Original"))
@@ -197,29 +216,120 @@ class ImageDetailDialog(QDialog):
         btn_yml.clicked.connect(self.on_yml_clicked)
         btn_rsi.clicked.connect(self.on_rsi_clicked)
         btn_gif.clicked.connect(self.on_gif_clicked)
+        btn_webp.clicked.connect(self.on_webp_clicked)
 
         group_btns_layout.addWidget(btn_img)
         group_btns_layout.addWidget(btn_gif)
+        group_btns_layout.addWidget(btn_webp)
         group_btns.setLayout(group_btns_layout)
 
-        # Главный слой
+        # Главный слой кнопок
         main_btn_layout = QHBoxLayout()
         main_btn_layout.addWidget(group_links)
         main_btn_layout.addWidget(group_btns)
 
         layout.addLayout(main_btn_layout)
 
+    def on_builder_toggled(self, checked: bool):
+        """Поведение при включении/выключении режима Сборщик."""
+        self.btn_layers.setVisible(checked)
+        self.change_state(self.item.get("state", ""))
+
+    def show_layers_menu(self):
+        """Выпадающее меню для настройки видимости и кадров слоев."""
+        menu = QMenu(self)
+        
+        file_path = Path(self.item.get("file", ""))
+        resources_dir = next((p for p in file_path.parents if p.name == "Resources"), None)
+        base_textures_path = resources_dir / "Textures" if resources_dir else None
+
+        for i, config in enumerate(self.layer_configs):
+            layer = config["layer"]
+            state_name = layer.get("state", "")
+            maps = layer.get("map", [f"Слой {i+1}"])
+            # Извлекаем красивое имя из enum (например, "DoorVisualLayers.Base" -> "Base")
+            layer_name = str(maps[0]).split(".")[-1] if maps else f"Слой {i+1}"
+            
+            # Определяем количество кадров (frameCount) из meta.json
+            frame_count = 1
+            if base_textures_path:
+                sprite_rel_path = layer.get("sprite")
+                layer_dir = base_textures_path / sprite_rel_path if sprite_rel_path else Path(self.item.get("path", ""))
+                meta_path = layer_dir / "meta.json"
+                if meta_path.exists():
+                    try:
+                        with open(meta_path, "r", encoding="utf-8") as f:
+                            meta_data = json.load(f)
+                            for st in meta_data.get("states", []):
+                                if st.get("name") == state_name:
+                                    frame_count = st.get("frameCount", 1)
+                                    break
+                    except Exception:
+                        pass
+
+            # Виджет для пункта меню (Чекбокс + Спиннер кадров при необходимости)
+            widget = QWidget()
+            h_layout = QHBoxLayout(widget)
+            h_layout.setContentsMargins(8, 4, 8, 4)
+
+            chk = QCheckBox(f"{layer_name} ({state_name})")
+            chk.setChecked(config["enabled"])
+            
+            def make_toggle_handler(idx=i, c=chk):
+                return lambda state: self.toggle_layer(idx, c.isChecked())
+            chk.toggled.connect(make_toggle_handler())
+            h_layout.addWidget(chk)
+
+            if frame_count > 1:
+                lbl = QLabel("Кадр:")
+                h_layout.addWidget(lbl)
+                spin = QSpinBox()
+                spin.setRange(0, frame_count - 1)
+                spin.setValue(config["frame"])
+                
+                def make_spin_handler(idx=i, s=spin):
+                    return lambda val: self.change_layer_frame(idx, val)
+                spin.valueChanged.connect(make_spin_handler())
+                h_layout.addWidget(spin)
+
+            action = QWidgetAction(menu)
+            action.setDefaultWidget(widget)
+            menu.addAction(action)
+
+        menu.exec(self.btn_layers.mapToGlobal(QPoint(0, self.btn_layers.height())))
+
+    def toggle_layer(self, index: int, enabled: bool):
+        self.layer_configs[index]["enabled"] = enabled
+        # Синхронизируем состояние в сам словарь item
+        if index < len(self.item.get("layers", [])):
+            self.item["layers"][index]["enabled"] = enabled
+        self.change_state(self.item.get("state", ""))
+
+    def change_layer_frame(self, index: int, frame: int):
+        self.layer_configs[index]["frame"] = frame
+        # Синхронизируем кадр в сам словарь item
+        if index < len(self.item.get("layers", [])):
+            self.item["layers"][index]["frame"] = frame
+        self.change_state(self.item.get("state", ""))
+
     def apply_layer_color(self, pixmap: QPixmap, color_hex: str) -> QPixmap:
-        """Накладывает цвет (tint) на изображение с сохранением альфа-канала."""
+        """Накладывает цвет через режимы Multiply и DestinationIn."""
+        if not color_hex or pixmap.isNull():
+            return pixmap
+
         result = QPixmap(pixmap.size())
         result.fill(Qt.GlobalColor.transparent)
 
         painter = QPainter(result)
         painter.drawPixmap(0, 0, pixmap)
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Multiply)
         painter.fillRect(result.rect(), QColor(color_hex))
+        
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
+        painter.drawPixmap(0, 0, pixmap)
+        
         painter.end()
-
         return result
 
     def render_single_image(self, state_name: str) -> tuple[QPixmap, int, int]:
@@ -236,7 +346,6 @@ class ImageDetailDialog(QDialog):
                 Qt.TransformationMode.FastTransformation
             )
         else:
-            # Заглушка, если файла нет
             pixmap = QPixmap(256, 256)
             pixmap.fill(QColor("#ff00ff"))
             width, height = 0, 0
@@ -244,27 +353,26 @@ class ImageDetailDialog(QDialog):
         return pixmap, width, height
 
     def render_composite_image(self) -> QPixmap:
-        """Собирает слои на базовом холсте с автоцентрированием слоёв и учётом offset."""
-        # 1. Получаем нативный игровой размер спрайта (по умолчанию 32x32)
+        """Собирает включенные слои на базовом холсте с учетом видимости, кадров и offset."""
         native_w = self.item.get("size", {}).get("x", 32) or 32
         native_h = self.item.get("size", {}).get("y", 32) or 32
 
-        # 2. Создаём промежуточный буфер нативного размера
         native_pixmap = QPixmap(native_w, native_h)
         native_pixmap.fill(Qt.GlobalColor.transparent)
 
         painter = QPainter(native_pixmap)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
 
-        layers = self.item.get("layers", [])
-
         file_path = Path(self.item.get("file", ""))
         resources_dir = next((p for p in file_path.parents if p.name == "Resources"), None)
+        base_textures_path = resources_dir / "Textures" if resources_dir else None
 
-        if resources_dir:
-            base_textures_path = resources_dir / "Textures"
+        if base_textures_path:
+            for config in self.layer_configs:
+                if not config["enabled"]:
+                    continue
 
-            for layer in layers:
+                layer = config["layer"]
                 state_name = layer.get("state")
                 sprite_rel_path = layer.get("sprite")
 
@@ -278,32 +386,49 @@ class ImageDetailDialog(QDialog):
                 if not layer_file_path.exists() or layer_file_path.is_dir():
                     continue
 
-                layer_pixmap = QPixmap(str(layer_file_path))
+                full_pixmap = QPixmap(str(layer_file_path))
+                if full_pixmap.isNull():
+                    continue
+
+                # Если спрайт содержит несколько кадров (сетка или строка), вырезаем нужный кадр
+                frame_idx = config.get("frame", 0)
+                if (full_pixmap.width() > native_w or full_pixmap.height() > native_h) and \
+                (full_pixmap.width() % native_w == 0) and (full_pixmap.height() % native_h == 0):
+                    
+                    frame_w = native_w
+                    frame_h = native_h
+                    
+                    # Количество кадров в одной строке (колонок)
+                    cols = full_pixmap.width() // native_w
+                    
+                    # Вычисляем колонку и строку для текущего frame_idx
+                    col = frame_idx % cols
+                    row = frame_idx // cols
+                    
+                    layer_pixmap = full_pixmap.copy(col * frame_w, row * frame_h, frame_w, frame_h)
+                else:
+                    layer_pixmap = full_pixmap
 
                 # Применение цвета (tint)
                 if "color" in layer and layer["color"]:
                     layer_pixmap = self.apply_layer_color(layer_pixmap, layer["color"])
 
-                # --- 3. Центрирование слоя относительно холста ---
                 layer_w = layer_pixmap.width()
                 layer_h = layer_pixmap.height()
 
                 center_x = (native_w - layer_w) // 2
                 center_y = (native_h - layer_h) // 2
 
-                # --- 4. Расчёт смещения (offset) ---
                 offset_x, offset_y = 0, 0
                 if "offset" in layer and layer["offset"]:
                     try:
                         parts = [float(p.strip()) for p in str(layer["offset"]).split(",")]
                         if len(parts) == 2:
                             offset_x = int(round(parts[0] * native_w))
-                            # Ось Y в движке SS14 инвертирована относительно Qt
                             offset_y = int(round(-parts[1] * native_h))
                     except ValueError:
                         pass
 
-                # Итоговые координаты отрисовки
                 final_x = center_x + offset_x
                 final_y = center_y + offset_y
 
@@ -311,7 +436,6 @@ class ImageDetailDialog(QDialog):
 
         painter.end()
 
-        # Масштабируем готовое изображение до размера UI (256x256)
         display_size = 256
         return native_pixmap.scaled(
             display_size, display_size,
@@ -324,7 +448,6 @@ class ImageDetailDialog(QDialog):
         self.item["state"] = new_state
         self.btn_state.setText(f"State: {new_state}")
 
-        # --- Проверка режима "Сборщик" ---
         if self.cb_builder.isChecked():
             pixmap = self.render_composite_image()
             img_w, img_h = 256, 256
@@ -372,12 +495,29 @@ class ImageDetailDialog(QDialog):
         json_path = Path(self.item.get("path", "")) / "meta.json"
         state_name = self.item.get("state", "")
         file_name = self.item.get("id", "")
-        ToGIF.process_json_file(json_path, state_name, file_name)
+        ToGIF.process_json_file(json_path, state_name, file_name, format="gif")
+    
+    def on_webp_clicked(self):
+        json_path = Path(self.item.get("path", "")) / "meta.json"
+        state_name = self.item.get("state", "")
+        file_name = self.item.get("id", "")
+        ToGIF.process_json_file(json_path, state_name, file_name, format="webp")
 
     def process_image_with_mode(self, mode: str):
-        image_path = Path(f"{self.item.get('path', '')}/{self.item.get('state', '')}.png")
-        image_name = f"{self.item.get('id', '')}-{self.item.get('state', '')}"
-        ToIMAGE.process_path(image_path, image_name, mode=mode)
+            image_path = Path(f"{self.item.get('path', '')}/{self.item.get('state', '')}.png")
+            image_name = f"{self.item.get('id', '')}-{self.item.get('state', '')}"
+            
+            if self.cb_builder.isChecked():
+                # Гарантированно обновляем все слои в item перед передачей в ToIMAGE
+                for i, config in enumerate(self.layer_configs):
+                    if i < len(self.item.get("layers", [])):
+                        self.item["layers"][i]["enabled"] = config["enabled"]
+                        self.item["layers"][i]["frame"] = config["frame"]
+                item_data = self.item
+            else:
+                item_data = None
+    
+            ToIMAGE.process_path(image_path, image_name, mode=mode, item=item_data)
 
 
 # Класс окна настроек
