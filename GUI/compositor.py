@@ -3,7 +3,8 @@ import os
 from PyQt6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QListWidget, QListWidgetItem,
-    QLineEdit, QSplitter, QFileDialog, QMessageBox
+    QLineEdit, QSplitter, QFileDialog, QMessageBox,
+    QGroupBox, QComboBox, QCheckBox
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap, QPainter
@@ -12,7 +13,7 @@ class LayerSelectorDialog(QDialog):
     """Окно выбора элемента из базы данных через ваш поиск."""
     def __init__(self, items: list, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Выбор элемента для сборщика")
+        self.setWindowTitle("Выбор элемента для композитора")
         self.setMinimumSize(500, 600)
         self.selected_item = None
         self.items = items
@@ -36,7 +37,7 @@ class LayerSelectorDialog(QDialog):
         self.btn_select.clicked.connect(self.accept_selection)
         btn_cancel = QPushButton("Отмена")
         btn_cancel.clicked.connect(self.reject)
-        
+
         btn_layout.addStretch()
         btn_layout.addWidget(self.btn_select)
         btn_layout.addWidget(btn_cancel)
@@ -50,7 +51,7 @@ class LayerSelectorDialog(QDialog):
             item_id = item.get("id", "Без ID")
             name_ftl = item.get("name_ftl", "")
             display_text = f"{item_id}" + (f" ({name_ftl})" if name_ftl else "")
-            
+
             list_item = QListWidgetItem(display_text)
             list_item.setData(Qt.ItemDataRole.UserRole, item)
             self.list_widget.addItem(list_item)
@@ -80,11 +81,11 @@ class LayerSelectorDialog(QDialog):
 
 
 class SceneBuilderDialog(QDialog):
-    """Главное окно сборщика сцены из нескольких слоев/предметов."""
+    """Главное окно композитора сцены из нескольких слоев/предметов с индивидуальными настройками."""
     def __init__(self, items: list, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Сборщик изображений и сцен (Scene Builder)")
-        self.setMinimumSize(900, 700)
+        self.setWindowTitle("Композитор изображений и сцен (Scene Builder)")
+        self.setMinimumSize(950, 750)
         self.items = items
 
         # Список слоев сцены: каждый элемент — отдельный объект со своими настройками
@@ -97,7 +98,7 @@ class SceneBuilderDialog(QDialog):
         # --- Левая панель: Предпросмотр холста ---
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
-        
+
         self.canvas_label = QLabel()
         self.canvas_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.canvas_label.setStyleSheet("background-color: #222222; border-radius: 8px;")
@@ -118,8 +119,9 @@ class SceneBuilderDialog(QDialog):
 
         right_layout.addWidget(QLabel("<b>Слои сцены (снизу вверх):</b>"))
 
-        # Список слоев с возможностью переупорядочивания
+        # Список слоев
         self.layers_list_widget = QListWidget()
+        self.layers_list_widget.currentRowChanged.connect(self.on_layer_row_changed)
         right_layout.addWidget(self.layers_list_widget)
 
         # Кнопки управления слоями
@@ -131,7 +133,7 @@ class SceneBuilderDialog(QDialog):
         btn_move_up = QPushButton("⬆ Вверх")
         btn_move_down = QPushButton("⬇ Вниз")
         btn_delete = QPushButton("🗑 Удалить")
-        
+
         btn_move_up.clicked.connect(self.move_layer_up)
         btn_move_down.clicked.connect(self.move_layer_down)
         btn_delete.clicked.connect(self.delete_layer)
@@ -141,8 +143,28 @@ class SceneBuilderDialog(QDialog):
         h_btn_layout.addWidget(btn_delete)
         right_layout.addLayout(h_btn_layout)
 
+        # --- Панель настроек выбранного слоя ---
+        self.settings_group = QGroupBox("⚙️ Настройки выбранного слоя")
+        settings_layout = QVBoxLayout(self.settings_group)
+
+        # Выбор состояния (state)
+        state_layout = QHBoxLayout()
+        state_layout.addWidget(QLabel("Состояние (state):"))
+        self.state_combo = QComboBox()
+        self.state_combo.currentIndexChanged.connect(self.on_state_changed)
+        state_layout.addWidget(self.state_combo)
+        settings_layout.addLayout(state_layout)
+
+        # Чекбокс видимости
+        self.enabled_checkbox = QCheckBox("Слой активен (отображать)")
+        self.enabled_checkbox.toggled.connect(self.on_enabled_toggled)
+        settings_layout.addWidget(self.enabled_checkbox)
+
+        right_layout.addWidget(self.settings_group)
+        self.settings_group.setEnabled(False)  #по умолчанию выключено, пока ничего не выбрано
+
         splitter.addWidget(right_widget)
-        splitter.setSizes([500, 400])
+        splitter.setSizes([550, 400])
 
         layout.addWidget(splitter)
         self.render_scene()
@@ -153,7 +175,11 @@ class SceneBuilderDialog(QDialog):
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.selected_item:
             item = dialog.selected_item
             states = item.get("states", [item.get("state", "default")])
-            default_state = states[0] if states else "default"
+            
+            # Пытаемся по умолчанию выбрать человеческий вариант, если он есть, иначе первый попавшийся
+            default_state = "equipped-INNERCLOTHING"
+            if default_state not in states:
+                default_state = states[0] if states else "default"
 
             # Добавляем слой в сцену
             self.scene_layers.append({
@@ -163,23 +189,88 @@ class SceneBuilderDialog(QDialog):
                 "enabled": True
             })
             self.update_layers_ui()
+            # Автоматически выделяем добавленный слой
+            self.layers_list_widget.setCurrentRow(len(self.scene_layers) - 1)
             self.render_scene()
 
     def update_layers_ui(self):
-        """Обновляет виджет списка слоев на панели."""
+        """Обновляет виджет списка слоев на панели без потери текущего выделения."""
+        current_row = self.layers_list_widget.currentRow()
+        self.layers_list_widget.blockSignals(True)
         self.layers_list_widget.clear()
+        
         for i, layer_data in enumerate(self.scene_layers):
             item_id = layer_data["item"].get("id", f"Слой {i+1}")
             state = layer_data["state"]
             status = "👁" if layer_data["enabled"] else "🚫"
-            
+
             list_item = QListWidgetItem(f"{status} [{i+1}] {item_id} ({state})")
             self.layers_list_widget.addItem(list_item)
+            
+        self.layers_list_widget.blockSignals(False)
+
+        # Восстанавливаем выделение
+        if 0 <= current_row < len(self.scene_layers):
+            self.layers_list_widget.setCurrentRow(current_row)
+        elif self.scene_layers:
+            self.layers_list_widget.setCurrentRow(len(self.scene_layers) - 1)
+        else:
+            self.settings_group.setEnabled(False)
+
+    def on_layer_row_changed(self, row):
+        """Вызывается при переключении выбора слоя в списке. Заполняет панель настроек."""
+        if row < 0 or row >= len(self.scene_layers):
+            self.settings_group.setEnabled(False)
+            return
+
+        self.settings_group.setEnabled(True)
+        layer_data = self.scene_layers[row]
+        item = layer_data["item"]
+
+        # Блокируем сигналы элементов управления во время заполнения
+        self.state_combo.blockSignals(True)
+        self.enabled_checkbox.blockSignals(True)
+
+        # Заполняем комбобокс состояниями из data.json элемента
+        self.state_combo.clear()
+        states = item.get("states", [item.get("state", "default")])
+        self.state_combo.addItems(states)
+
+        # Выбираем текущее состояние слоя
+        current_state = layer_data["state"]
+        state_idx = self.state_combo.findText(current_state)
+        if state_idx >= 0:
+            self.state_combo.setCurrentIndex(state_idx)
+
+        # Устанавливаем чекбокс видимости
+        self.enabled_checkbox.setChecked(layer_data["enabled"])
+
+        # Разблокируем сигналы
+        self.state_combo.blockSignals(False)
+        self.enabled_checkbox.blockSignals(False)
+
+    def on_state_changed(self, index):
+        """Срабатывает при изменении состояния в выпадающем списке."""
+        row = self.layers_list_widget.currentRow()
+        if 0 <= row < len(self.scene_layers):
+            new_state = self.state_combo.currentText()
+            if new_state:
+                self.scene_layers[row]["state"] = new_state
+                self.update_layers_ui()
+                self.render_scene()
+
+    def on_enabled_toggled(self, checked):
+        """Срабатывает при переключении галочки активности слоя."""
+        row = self.layers_list_widget.currentRow()
+        if 0 <= row < len(self.scene_layers):
+            self.scene_layers[row]["enabled"] = checked
+            self.update_layers_ui()
+            self.render_scene()
 
     def render_scene(self):
         """Рендерит все включенные слои сцены на общий холст."""
         native_w, native_h = 32, 32  # Стандартный игровой размер спрайта SS14
-        
+
         canvas = QPixmap(native_w, native_h)
         canvas.fill(Qt.GlobalColor.transparent)
 
@@ -253,9 +344,8 @@ class SceneBuilderDialog(QDialog):
         if not self.scene_layers:
             QMessageBox.warning(self, "Внимание", "Сцена пуста! Добавьте хотя бы один слой.")
             return
-            
+
         file_path, _ = QFileDialog.getSaveFileName(self, "Сохранить сборку", "composite_scene.png", "PNG Images (*.png)")
         if file_path:
-            # Сохраняем в оригинальном разрешении или масштабируем по необходимости
             self.current_rendered_canvas.scaled(256, 256, Qt.AspectRatioMode.KeepAspectRatio).save(file_path, "PNG")
             QMessageBox.information(self, "Успех", f"Сцена успешно сохранена:\n{file_path}")

@@ -12,7 +12,7 @@ from GUI.dialogs import ImageDetailDialog, SettingsDialog
 
 from pathlib import Path
 
-from GUI.test_dialog import SceneBuilderDialog
+from GUI.compositor import SceneBuilderDialog
 
 # Главное окно
 class MainWindow(QMainWindow):
