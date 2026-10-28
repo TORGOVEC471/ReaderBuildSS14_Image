@@ -3,3 +3,4 @@ __pycache__/
 settings.ini
 data.json
 tests/
+benchmark.py

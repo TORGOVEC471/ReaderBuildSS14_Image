@@ -1,3 +1,3 @@
 @echo off
-start /B pythonw "UI.py"
+start /B pythonw "main.py"
 exit

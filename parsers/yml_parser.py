@@ -1,3 +1,4 @@
+from functools import lru_cache
 from pathlib import Path
 import yaml
 
@@ -28,12 +29,10 @@ def process_layers(raw_layers, default_sprite):
     for layer in raw_layers:
         if isinstance(layer, dict):
             layer_copy = layer.copy()
-            # Если у слоя нет своего sprite, подставляем основной sprite компонента/родителя
             if 'sprite' not in layer_copy or not layer_copy['sprite']:
                 if default_sprite:
                     layer_copy['sprite'] = default_sprite
 
-            # Приведение булевых state к строкам ("on" / "off")
             if isinstance(layer_copy.get('state'), bool):
                 layer_copy['state'] = "on" if layer_copy['state'] else "off"
 
@@ -72,7 +71,6 @@ def extract_sprite_and_layers(entity_dict):
 
         comp_type = comp.get('type')
 
-        # Обработка компонента Sprite
         if comp_type == 'Sprite':
             if comp.get('sprite'):
                 local_sprite = comp.get('sprite')
@@ -80,29 +78,6 @@ def extract_sprite_and_layers(entity_dict):
                 local_state = comp.get('state')
             elif comp.get('icon'):
                 local_state = comp.get('icon')
-
-            # sprite_layers = comp.get('layers')
-            # if not local_state and sprite_layers and isinstance(sprite_layers, list):
-            #     target_layer = None
-            #     for layer in sprite_layers:
-            #         if isinstance(layer, dict) and layer.get("state"):
-            #             if not layer.get("sprite") or layer.get("sprite") == local_sprite:
-            #                 target_layer = layer
-            #                 break
-
-            #     if not target_layer:
-            #         for layer in reversed(sprite_layers):
-            #             if isinstance(layer, dict) and layer.get("state"):
-            #                 target_layer = layer
-            #                 break
-
-            #     if target_layer:
-            #         layer_state = target_layer.get("state")
-            #         if isinstance(layer_state, bool):
-            #             layer_state = "on" if layer_state else "off"
-            #         local_state = layer_state
-            #         if not local_sprite:
-            #             local_sprite = target_layer.get("sprite")
 
             layers = comp.get('layers')
             if layers and isinstance(layers, list):
@@ -114,7 +89,6 @@ def extract_sprite_and_layers(entity_dict):
                     elif isinstance(first_layer, str):
                         local_state = first_layer
 
-        # Обработка компонента Icon
         elif comp_type == 'Icon':
             if comp.get('sprite'):
                 local_sprite = comp.get('sprite')
@@ -124,71 +98,7 @@ def extract_sprite_and_layers(entity_dict):
     return local_sprite, local_state, local_layers
 
 
-# --- 4. Рекурсивное построение цепочки родителей (Top-Down) ---
-def get_ancestor_chain(entity_id, entities_db, visited=None):
-    if visited is None:
-        visited = set()
-
-    if entity_id in visited or entity_id not in entities_db:
-        return []
-
-    visited.add(entity_id)
-    entity_data = entities_db[entity_id]['raw']
-
-    parents = entity_data.get('parent')
-    chain = []
-
-    if parents:
-        if isinstance(parents, str):
-            parents = [parents]
-        for parent_id in parents:
-            chain.extend(get_ancestor_chain(parent_id, entities_db, visited.copy()))
-
-    chain.append(entity_id)
-    return chain
-
-
-# --- 5. Резолвер с учетом слоев ---
-def resolve_entity_sprite_and_layers(entity_id, entities_db):
-    raw_chain = get_ancestor_chain(entity_id, entities_db)
-    if not raw_chain:
-        return None, None, []
-
-    dedup_chain = []
-    for item in raw_chain:
-        if item in dedup_chain:
-            dedup_chain.remove(item)
-        dedup_chain.append(item)
-
-    final_sprite = None
-    final_state = None
-    final_layers = []
-
-    for eid in dedup_chain:
-        entity_data = entities_db[eid]['raw']
-        local_sprite, local_state, local_layers = extract_sprite_and_layers(entity_data)
-
-        if local_sprite:
-            final_sprite = local_sprite
-        if local_state:
-            final_state = local_state
-        if local_layers:
-            final_layers = local_layers
-
-    # Нормализуем и подставляем итоговый sprite в каждый слой
-    processed_layers = process_layers(final_layers, final_sprite)
-
-    # Если массив layers был пуст, но заданы базовые state и sprite
-    if not processed_layers and final_state:
-        processed_layers = [{
-            'sprite': final_sprite,
-            'state': final_state
-        }]
-
-    return final_sprite, final_state, processed_layers
-
-
-# --- 6. Главная функция обхода ---
+# --- 6. Главная функция обхода с мемоизацией ---
 def process_prototypes(directory_path):
     root_dir = Path(directory_path)
     entities_db = {}
@@ -208,13 +118,70 @@ def process_prototypes(directory_path):
         except Exception as e:
             print(f"Ошибка при чтении файла {file_path}: {e}")
 
-    # ЭТАП 2: Разрешение наследования
+    # --- Внутренние функции с lru_cache (используют entities_db из замыкания) ---
+
+    @lru_cache(maxsize=None)
+    def get_ancestor_chain(entity_id):
+        if entity_id not in entities_db:
+            return []
+
+        entity_data = entities_db[entity_id]['raw']
+        parents = entity_data.get('parent')
+        chain = []
+
+        if parents:
+            if isinstance(parents, str):
+                parents = [parents]
+            for parent_id in parents:
+                chain.extend(get_ancestor_chain(parent_id))
+
+        chain.append(entity_id)
+        return chain
+
+    @lru_cache(maxsize=None)
+    def resolve_entity_sprite_and_layers(entity_id):
+        raw_chain = get_ancestor_chain(entity_id)
+        if not raw_chain:
+            return None, None, []
+
+        dedup_chain = []
+        for item in raw_chain:
+            if item in dedup_chain:
+                dedup_chain.remove(item)
+            dedup_chain.append(item)
+
+        final_sprite = None
+        final_state = None
+        final_layers = []
+
+        for eid in dedup_chain:
+            entity_data = entities_db[eid]['raw']
+            local_sprite, local_state, local_layers = extract_sprite_and_layers(entity_data)
+
+            if local_sprite:
+                final_sprite = local_sprite
+            if local_state:
+                final_state = local_state
+            if local_layers:
+                final_layers = local_layers
+
+        processed_layers = process_layers(final_layers, final_sprite)
+
+        if not processed_layers and final_state:
+            processed_layers = [{
+                'sprite': final_sprite,
+                'state': final_state
+            }]
+
+        return final_sprite, final_state, processed_layers
+
+    # --- ЭТАП 2: Разрешение наследования ---
     results = {}
     for entity_id, info in entities_db.items():
         file_name = info['file']
         raw_suffix = info['raw'].get('suffix')
-        chain = get_ancestor_chain(entity_id, entities_db)
-        sprite_path, sprite_state, layers = resolve_entity_sprite_and_layers(entity_id, entities_db)
+        chain = get_ancestor_chain(entity_id)
+        sprite_path, sprite_state, layers = resolve_entity_sprite_and_layers(entity_id)
 
         if file_name not in results:
             results[file_name] = []

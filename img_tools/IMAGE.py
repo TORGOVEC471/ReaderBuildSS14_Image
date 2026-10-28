@@ -15,7 +15,7 @@ path_saves = config["General"]["path_saves"]
 OUTPUT_DIR = Path(path_saves).parent / "Saves/images"
 if not OUTPUT_DIR.exists():
     OUTPUT_DIR.mkdir(parents=True)
-elif OUTPUT_DIR == ".":
+elif OUTPUT_DIR == Path("."):
     OUTPUT_DIR = Path(__file__).parent / "Saves/images"
 
 DEFAULT_SOURCE_DIR = Path(__file__).parent

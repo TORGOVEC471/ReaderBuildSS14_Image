@@ -1,20 +1,20 @@
-import YMLClassFile as YMLF
 import json
 import configparser
 from pathlib import Path
-import FTLReader as FTLR
+import parsers.yml_parser as YMLF
+import parsers.ftl_parser as FTLR
 
 config = configparser.ConfigParser()
 config.read("settings.ini", encoding="utf-8")
 
-path_build = config["General"]["path_build"]
+path_build = Path(config["General"]["path_build"])
 
-dir_textures = '/Resources/Textures/'
-dir_prototypes = '/Resources/Prototypes/'
-dir_ftl_RU = '/Resources/Locale/ru-RU'
+dir_textures = 'Resources/Textures'
+dir_prototypes = 'Resources/Prototypes'
+dir_ftl_RU = 'Resources/Locale/ru-RU'
 list_SpriteID = []
-TARGET_DIR_YML = f"{path_build+dir_prototypes}"
-TARGET_DIR_FTL = f"{path_build+dir_ftl_RU}"
+TARGET_DIR_YML = f"{path_build / dir_prototypes}"
+TARGET_DIR_FTL = f"{path_build / dir_ftl_RU}"
 
 def save_data_build(TARGET_DIR_YML, TARGET_DIR_FTL):
     parsed_data = YMLF.process_prototypes(TARGET_DIR_YML)
@@ -22,15 +22,15 @@ def save_data_build(TARGET_DIR_YML, TARGET_DIR_FTL):
 
     # Вывод результатов
     for file_name, entities in parsed_data.items():
-        print(f"\nФайл: {file_name}")
+        # print(f"\nФайл: {file_name}")
         for entity in entities:
             if entity.get('sprite') is not None:
                 # Определение значения state
                 state_value = entity.get('state')
 
                 # Если state равен None, получаем его из meta.json
-                rsi_path = path_build + dir_textures + entity['sprite'].removeprefix("/Textures/")
-                meta_path = rsi_path + "/meta.json"
+                rsi_path = path_build / dir_textures / entity['sprite'].removeprefix("/Textures/")
+                meta_path = rsi_path / "meta.json"
                 if state_value is None:
                     state_value = process_meta(meta_path)
 
@@ -71,7 +71,7 @@ def save_data_build(TARGET_DIR_YML, TARGET_DIR_FTL):
                     "parent": entity.get("parent"),
                     "parents_chain": entity.get('parents_chain'),
                     "sprite": entity['sprite'],
-                    "path": path_build + dir_textures + entity['sprite'].removeprefix("/Textures/"),
+                    "path": path_build / dir_textures / entity['sprite'].removeprefix("/Textures/"),
                     "state": state_value,
                     "states": get_states(rsi_path),
                     "layers": entity.get('layers'),
@@ -80,7 +80,7 @@ def save_data_build(TARGET_DIR_YML, TARGET_DIR_FTL):
                     )
     # Открываем файл на запись ('w') с указанием кодировки utf-8
     with open("data.json", "w", encoding="utf-8") as file:
-        json.dump(list_SpriteID, file, ensure_ascii=False, indent=4)
+        json.dump(list_SpriteID, file, ensure_ascii=False, indent=4, default=json_default_converter)
     print("Файлы записаны в data.json")
 
 # функция поиска первого state в meta.json
@@ -119,6 +119,12 @@ def get_states(directory_path : str | Path) -> list[Path]:
     png_files = [file.stem for file in rsi_dir.glob("*.png") if file.is_file()]
 
     return png_files
+
+# Функция, которая объясняет json, как сериализовать неизвестные типы (например, Path)
+def json_default_converter(obj):
+    if isinstance(obj, Path):
+        return str(obj)
+    raise TypeError(f'[ERROR] Object of type {obj.__class__.__name__} is not JSON serializable')
 
 # --- Пример использования ---
 if __name__ == "__main__":

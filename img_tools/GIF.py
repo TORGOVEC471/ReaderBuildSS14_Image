@@ -14,17 +14,6 @@ from typing import Literal
 config = configparser.ConfigParser()
 
 SETTINGS_FILE = "settings.ini"
-if not Path(SETTINGS_FILE).exists():
-    config["General"] = {
-        "path_saves":".",
-        "path_build":"."
-    }
-    # Записываем настройки в файл
-    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-        config.write(f)
-    print(f"Файл {SETTINGS_FILE} успешно создан.")
-else:
-    print(f"Файл {SETTINGS_FILE} уже существует.")
 
 config.read("settings.ini", encoding="utf-8")
 
