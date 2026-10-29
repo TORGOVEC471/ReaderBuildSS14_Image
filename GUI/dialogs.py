@@ -13,6 +13,7 @@ import img_tools.IMAGE as ToIMAGE
 from pathlib import Path
 from GUI.styles import (btn_style, group_style)
 from GUI.threads import SaveDataThread
+from config import SETTINGS_FILE, PATH_BUILD
 
 # Модальное окно с увеличенной картинкой и кнопками
 class ImageDetailDialog(QDialog):
@@ -436,12 +437,9 @@ class ImageDetailDialog(QDialog):
 
 # Класс окна настроек
 class SettingsDialog(QDialog):
-    def __init__(self, SETTINGS_FILE, path_build, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose) # Уничтожит объект при закрытии окна
-
-        self.SETTINGS_FILE = SETTINGS_FILE
-        self.path_build = path_build
 
         self.setWindowTitle("Настройки")
         self.resize(600, 250)
@@ -450,7 +448,7 @@ class SettingsDialog(QDialog):
         main_layout = QVBoxLayout()
 
         # Инициализация работы ini-файла
-        self.settings = QSettings(self.SETTINGS_FILE, QSettings.Format.IniFormat)
+        self.settings = QSettings(str(SETTINGS_FILE), QSettings.Format.IniFormat)
 
         # ----------------------------------------------------
         # 2. Поле выбора пути к папке (QLineEdit + QPushButton)
@@ -560,7 +558,7 @@ class SettingsDialog(QDialog):
         self.settings.setValue("path_saves", self.path_save_input.text())
 
     def confirm_action(self):
-        if self.path_build == Path("."):
+        if PATH_BUILD == Path("."):
             print("[INFO] Отсутсвует путь билда!")
             QMessageBox.information(
                 self,
@@ -587,7 +585,7 @@ class SettingsDialog(QDialog):
 
             # Запускаем фоновый поток
             try:
-                self.save_thread = SaveDataThread(self.path_build)
+                self.save_thread = SaveDataThread()
                 self.save_thread.finished_signal.connect(self.on_save_finished)
                 self.save_thread.finished.connect(self.save_thread.deleteLater)
                 self.save_thread.start()

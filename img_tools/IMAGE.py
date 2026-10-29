@@ -1,18 +1,12 @@
 import argparse
-import configparser
 import json
 from pathlib import Path
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
-
-# Настройки
-config = configparser.ConfigParser()
-config.read("settings.ini", encoding="utf-8")
-
-path_saves = config["General"]["path_saves"]
+from config import PATH_SAVES
 
 # Папка, куда сохраняются итоговые .png изображения
-OUTPUT_DIR = Path(path_saves).parent / "Saves/images"
+OUTPUT_DIR = Path(PATH_SAVES).parent / "Saves/images"
 if not OUTPUT_DIR.exists():
     OUTPUT_DIR.mkdir(parents=True)
 elif OUTPUT_DIR == Path("."):

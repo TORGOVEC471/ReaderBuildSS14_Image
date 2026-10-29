@@ -6,21 +6,18 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QPixmap, QColor, QFont, QPainter
 from PyQt6.QtCore import Qt, QSettings
+from pathlib import Path
 from GUI.styles import COLUMNS, PAGE_SIZE
 from GUI.widgets import ClickableLabel
 from GUI.dialogs import ImageDetailDialog, SettingsDialog
-
-from pathlib import Path
-
 from GUI.compositor import SceneBuilderDialog
+from config import SETTINGS_FILE
 
 # Главное окно
 class MainWindow(QMainWindow):
-    def __init__(self, items, SETTINGS_FILE, path_build):
+    def __init__(self, items):
         super().__init__()
         self.items = items
-        self.SETTINGS_FILE = SETTINGS_FILE
-        self.path_build = path_build
 
         self.setWindowTitle("ReaderBuildSS14_Image")
         self.setFixedSize(1200, 800)
@@ -406,7 +403,7 @@ class MainWindow(QMainWindow):
         return menu_bar
 
     def on_settings_clicked(self):
-        dialog = SettingsDialog(self.SETTINGS_FILE, self.path_build)
+        dialog = SettingsDialog()
 
         if dialog.exec() == QDialog.DialogCode.Accepted:
             dialog.save_settings()
@@ -414,7 +411,7 @@ class MainWindow(QMainWindow):
 
     def load_app_settings(self):
         """Загрузка и применение настроек в главном окне."""
-        settings = QSettings(self.SETTINGS_FILE, QSettings.Format.IniFormat)
+        settings = QSettings(str(SETTINGS_FILE), QSettings.Format.IniFormat)
         build = settings.value("Path_Build", "Не выбран", type=str)
         save = settings.value("Path_Saves", "Не выбран", type=str)
 

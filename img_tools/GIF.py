@@ -6,21 +6,13 @@ import argparse
 from pathlib import Path
 from chardet import UniversalDetector
 from PIL import Image
-import configparser
-
 from typing import Literal
 
-# Настройки
-config = configparser.ConfigParser()
+from config import PATH_SAVES
 
-SETTINGS_FILE = "settings.ini"
-
-config.read("settings.ini", encoding="utf-8")
-
-path_saves = config["General"]["path_Saves"]
 
 # Папка, куда сохраняются итоговые .gif анимации
-OUTPUT_DIR = Path(path_saves).parent / "Saves/animations"
+OUTPUT_DIR = Path(PATH_SAVES).parent / "Saves/animations"
 if not OUTPUT_DIR.exists():
     OUTPUT_DIR.mkdir(parents=True)
 elif OUTPUT_DIR == Path("."):

@@ -1,22 +1,17 @@
 import json
-import configparser
 from pathlib import Path
 import parsers.yml_parser as YMLF
 import parsers.ftl_parser as FTLR
-
-config = configparser.ConfigParser()
-config.read("settings.ini", encoding="utf-8")
-
-path_build = Path(config["General"]["path_build"])
+from config import PATH_BUILD, DATA_FILE
 
 dir_textures = 'Resources/Textures'
 dir_prototypes = 'Resources/Prototypes'
 dir_ftl_RU = 'Resources/Locale/ru-RU'
-list_SpriteID = []
-TARGET_DIR_YML = f"{path_build / dir_prototypes}"
-TARGET_DIR_FTL = f"{path_build / dir_ftl_RU}"
+TARGET_DIR_YML = f"{PATH_BUILD / dir_prototypes}"
+TARGET_DIR_FTL = f"{PATH_BUILD / dir_ftl_RU}"
 
 def save_data_build(TARGET_DIR_YML, TARGET_DIR_FTL):
+    list_SpriteID = []
     parsed_data = YMLF.process_prototypes(TARGET_DIR_YML)
     parsed_ftl = FTLR.load_ftl_directory(TARGET_DIR_FTL)
 
@@ -29,7 +24,7 @@ def save_data_build(TARGET_DIR_YML, TARGET_DIR_FTL):
                 state_value = entity.get('state')
 
                 # Если state равен None, получаем его из meta.json
-                rsi_path = path_build / dir_textures / entity['sprite'].removeprefix("/Textures/")
+                rsi_path = PATH_BUILD / dir_textures / entity['sprite'].removeprefix("/Textures/")
                 meta_path = rsi_path / "meta.json"
                 if state_value is None:
                     state_value = process_meta(meta_path)
@@ -71,7 +66,7 @@ def save_data_build(TARGET_DIR_YML, TARGET_DIR_FTL):
                     "parent": entity.get("parent"),
                     "parents_chain": entity.get('parents_chain'),
                     "sprite": entity['sprite'],
-                    "path": path_build / dir_textures / entity['sprite'].removeprefix("/Textures/"),
+                    "path": PATH_BUILD / dir_textures / entity['sprite'].removeprefix("/Textures/"),
                     "state": state_value,
                     "states": get_states(rsi_path),
                     "layers": entity.get('layers'),
@@ -79,7 +74,7 @@ def save_data_build(TARGET_DIR_YML, TARGET_DIR_FTL):
                     },
                     )
     # Открываем файл на запись ('w') с указанием кодировки utf-8
-    with open("data.json", "w", encoding="utf-8") as file:
+    with open(DATA_FILE, "w", encoding="utf-8") as file:
         json.dump(list_SpriteID, file, ensure_ascii=False, indent=4, default=json_default_converter)
     print("Файлы записаны в data.json")
 
