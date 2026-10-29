@@ -528,7 +528,7 @@ class SettingsDialog(QDialog):
         button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        button_box.accepted.connect(self.accept)
+        button_box.accepted.connect(self.on_accept_clicked)
         button_box.rejected.connect(self.reject)
 
         main_layout.addWidget(button_box)
@@ -545,12 +545,16 @@ class SettingsDialog(QDialog):
 
     def load_settings(self):
         """Загрузка данных из settings.ini в виджеты."""
-        saved_path_save = self.settings.value("Path_Saves", "", type=str)
-        saved_path_build = self.settings.value("Path_Build", ".", type=str)
+        saved_path_save = self.settings.value("path_saves", "", type=str)
+        saved_path_build = self.settings.value("path_build", ".", type=str)
 
         # Устанавливаем пути в QLineEdit
         self.path_save_input.setText(saved_path_save)
         self.path_build_input.setText(saved_path_build)
+
+    def on_accept_clicked(self):
+        self.save_settings()
+        self.accept()
 
     def save_settings(self):
         """Сохранение данных из виджетов в settings.ini."""

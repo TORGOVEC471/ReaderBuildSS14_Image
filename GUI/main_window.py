@@ -406,7 +406,6 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog()
 
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            dialog.save_settings()
             self.load_app_settings()
 
     def load_app_settings(self):

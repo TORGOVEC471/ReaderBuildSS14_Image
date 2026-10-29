@@ -1,6 +1,9 @@
 __pycache__/
 *.pyc
+*.spec
 settings.ini
 data.json
 tests/
 benchmark.py
+build
+dist
