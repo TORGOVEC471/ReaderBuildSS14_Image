@@ -32,3 +32,27 @@ group_style = """
         top: 5px
     }
 """
+# Стиль левого меню главного окна
+menu_bar_style = """
+    QFrame {
+        background-color: #2c3e50;
+        border: none;
+    }
+    QPushButton {
+        color: #ecf0f1;
+        background-color: transparent;
+        border: none;
+        padding: 12px 15px;
+        text-align: left;
+        font-size: 14px;
+        font-weight: bold;
+        border-radius: 5px;
+    }
+    QPushButton:hover {
+        background-color: #34495e;
+        color: #ffffff;
+    }
+    QPushButton:pressed {
+        background-color: #1abc9c;
+    }
+"""

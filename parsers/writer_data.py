@@ -4,122 +4,122 @@ import parsers.yml_parser as YMLF
 import parsers.ftl_parser as FTLR
 from config import PATH_BUILD, DATA_FILE
 
-dir_textures = 'Resources/Textures'
-dir_prototypes = 'Resources/Prototypes'
-dir_ftl_RU = 'Resources/Locale/ru-RU'
-TARGET_DIR_YML = f"{PATH_BUILD / dir_prototypes}"
-TARGET_DIR_FTL = f"{PATH_BUILD / dir_ftl_RU}"
+DIR_TEXTURES = 'Resources/Textures'
+DIR_PROTOTYPES = 'Resources/Prototypes'
+DIR_FTL_RU = 'Resources/Locale/ru-RU'
 
-def save_data_build(TARGET_DIR_YML, TARGET_DIR_FTL):
-    list_SpriteID = []
-    parsed_data = YMLF.process_prototypes(TARGET_DIR_YML)
-    parsed_ftl = FTLR.load_ftl_directory(TARGET_DIR_FTL)
+TARGET_DIR_YML = PATH_BUILD / DIR_PROTOTYPES
+TARGET_DIR_FTL = PATH_BUILD / DIR_FTL_RU
 
-    # Вывод результатов
-    for file_name, entities in parsed_data.items():
-        # print(f"\nФайл: {file_name}")
-        for entity in entities:
-            if entity.get('sprite') is not None:
-                # Определение значения state
-                state_value = entity.get('state')
 
-                # Если state равен None, получаем его из meta.json
-                rsi_path = PATH_BUILD / dir_textures / entity['sprite'].removeprefix("/Textures/")
-                meta_path = rsi_path / "meta.json"
-                if state_value is None:
-                    state_value = process_meta(meta_path)
+def load_rsi_info(rsi_path: Path) -> tuple[dict, list[str], str | None]:
+    """Загружает метаданные RSI (размер, список стейтов и дефолтный стейт) за один раз."""
+    meta_path = rsi_path / "meta.json"
+    size = {"x": 32, "y": 32}
+    states = []
+    default_state = None
 
-                try:
-                    with open(Path(meta_path), "r", encoding="utf-8-sig") as f:
-                        data = json.load(f)
-                        size = data.get("size", {"x": 32, "y": 32})
-                except Exception as e:
-                    print(f"[WARN] Failed to read metadata from {meta_path}: {e}")
-
-                ftl_key = f"ent-{entity['id']}"
-                local_info = parsed_ftl.get(ftl_key, {})
-
-                name_ftl = local_info.get('name')
-                desc_ftl = local_info.get('desc')
-                suffix_ftl = local_info.get('suffix')
-
-                # Фоллбэк: если своего FTL нет, пробуем подтянуть name/desc из родителей
-                if (not name_ftl or not desc_ftl) and entity.get('parents_chain'):
-                    for parent_id in entity['parents_chain']:
-                        parent_key = f"ent-{parent_id}"
-                        if parent_key in parsed_ftl:
-                            p_info = parsed_ftl[parent_key]
-                            if not name_ftl:
-                                name_ftl = p_info.get('name')
-                            if not desc_ftl:
-                                desc_ftl = p_info.get('desc')
-                            if name_ftl and desc_ftl:
-                                break
-
-                list_SpriteID.append({
-                    "file": file_name.replace("\\", "/"),
-                    "id": entity['id'],
-                    "name_ftl": name_ftl,
-                    "desc_ftl": desc_ftl,
-                    "suffix_ftl": suffix_ftl,
-                    "suffix": entity.get('suffix'),
-                    "parent": entity.get("parent"),
-                    "parents_chain": entity.get('parents_chain'),
-                    "sprite": entity['sprite'],
-                    "path": PATH_BUILD / dir_textures / entity['sprite'].removeprefix("/Textures/"),
-                    "state": state_value,
-                    "states": get_states(rsi_path),
-                    "layers": entity.get('layers'),
-                    "size": size
-                    },
-                    )
-    # Открываем файл на запись ('w') с указанием кодировки utf-8
-    with open(DATA_FILE, "w", encoding="utf-8") as file:
-        json.dump(list_SpriteID, file, ensure_ascii=False, indent=4, default=json_default_converter)
-    print("Файлы записаны в data.json")
-
-# функция поиска первого state в meta.json
-def process_meta(directory_path) -> None:
-    """Берёт первый попавшийся .png в meta.json"""
-    root_dir = Path(directory_path)
-
-    if not root_dir.exists():
-        print(f"[ERROR] Path does not exist: {root_dir}")
-        return
-
-    # 2. Если передан .json файл — обрабатываем все .png состояния из него
-    if root_dir.is_file() and root_dir.suffix.lower() == ".json":
+    if meta_path.is_file():
         try:
-            # Открываем сам файл root_dir, а не parent_dir
-            with open(root_dir, "r", encoding="utf-8-sig") as f:
+            with open(meta_path, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
-
-            states = data.get("states", [])
-            if states and isinstance(states, list):
-                return states[0].get("name")
-
+                size = data.get("size", size)
+                raw_states = data.get("states", [])
+                if isinstance(raw_states, list):
+                    states = [s.get("name") for s in raw_states if s.get("name")]
+                    if states:
+                        default_state = states[0]
         except Exception as e:
-            print(f"[ERROR] Ошибка при чтении {root_dir}: {e}")
-            return None
+            print(f"[WARN] Failed to read metadata from {meta_path}: {e}")
 
-def get_states(directory_path : str | Path) -> list[Path]:
-    """Возвращает список всех .png файлов в папке .rsi"""
-    rsi_dir = Path(directory_path)
+    # Добавляем стейты из названий PNG-файлов, если они есть
+    if rsi_path.is_dir():
+        png_states = [file.stem for file in rsi_path.glob("*.png") if file.is_file()]
+        # Объединяем списки без дубликатов, сохраняя порядок
+        states = list(dict.fromkeys(states + png_states))
 
-    if not rsi_dir.is_dir():
-        print(f"[ERROR] Указанный путь не является директорией: {rsi_dir}")
-        return []
+    return size, states, default_state
 
-    # Получаем все .png файлы в папке
-    png_files = [file.stem for file in rsi_dir.glob("*.png") if file.is_file()]
 
-    return png_files
+def find_ftl_info(entity: dict, parsed_ftl: dict) -> tuple[str | None, str | None, str | None]:
+    """Ищет имя, описание и суффикс в FTL с учетом фоллбэка по цепочке родителей."""
+    ftl_key = f"ent-{entity['id']}"
+    local_info = parsed_ftl.get(ftl_key, {})
 
-# Функция, которая объясняет json, как сериализовать неизвестные типы (например, Path)
-def json_default_converter(obj):
-    if isinstance(obj, Path):
-        return str(obj)
-    raise TypeError(f'[ERROR] Object of type {obj.__class__.__name__} is not JSON serializable')
+    name_ftl = local_info.get('name')
+    desc_ftl = local_info.get('desc')
+    suffix_ftl = local_info.get('suffix')
+
+    # Фоллбэк: если своего FTL нет, подтягиваем из родителей
+    if (not name_ftl or not desc_ftl) and entity.get('parents_chain'):
+        for parent_id in entity['parents_chain']:
+            parent_key = f"ent-{parent_id}"
+            if parent_key in parsed_ftl:
+                p_info = parsed_ftl[parent_key]
+                if not name_ftl:
+                    name_ftl = p_info.get('name')
+                if not desc_ftl:
+                    desc_ftl = p_info.get('desc')
+                if name_ftl and desc_ftl:
+                    break
+
+    return name_ftl, desc_ftl, suffix_ftl
+
+
+def save_data_build(target_dir_yml: Path, target_dir_ftl: Path):
+    sprite_data_list = []
+    parsed_data = YMLF.process_prototypes(target_dir_yml)
+    parsed_ftl = FTLR.load_ftl_directory(target_dir_ftl)
+
+    for file_name, entities in parsed_data.items():
+        normalized_file = Path(file_name).as_posix()
+        
+        for entity in entities:
+            sprite = entity.get('sprite')
+            if not sprite:
+                continue
+
+            # Формируем путь к текстуре
+            rsi_path = PATH_BUILD / DIR_TEXTURES / sprite.removeprefix("/Textures/")
+            
+            # Получаем всю информацию по RSI за один вызов
+            size, states, default_state = load_rsi_info(rsi_path)
+            
+            # Если state не задан в сущности, берем дефолтный из RSI
+            state_value = entity.get('state') or default_state
+
+            # Получаем локализацию
+            name_ftl, desc_ftl, suffix_ftl = find_ftl_info(entity, parsed_ftl)
+
+            sprite_data_list.append({
+                "file": normalized_file,
+                "id": entity['id'],
+                "name_ftl": name_ftl,
+                "desc_ftl": desc_ftl,
+                "suffix_ftl": suffix_ftl,
+                "suffix": entity.get('suffix'),
+                "parent": entity.get("parent"),
+                "parents_chain": entity.get('parents_chain'),
+                "sprite": sprite,
+                "path": rsi_path,
+                "state": state_value,
+                "states": states,
+                "layers": entity.get('layers'),
+                "size": size
+            })
+
+    # Сохранение результатов в JSON
+    with open(DATA_FILE, "w", encoding="utf-8") as file:
+        json.dump(
+            sprite_data_list, 
+            file, 
+            ensure_ascii=False, 
+            indent=4, 
+            default=lambda obj: str(obj) if isinstance(obj, Path) else obj
+        )
+    
+    print(f"Файлы успешно записаны в {DATA_FILE}")
+
 
 # --- Пример использования ---
 if __name__ == "__main__":

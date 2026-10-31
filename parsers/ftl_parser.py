@@ -1,89 +1,108 @@
 import re
 from pathlib import Path
+from typing import Dict, Any, List, Set, Optional
 
-def parse_ftl_file(file_path):
+def parse_ftl_file(file_path: Path) -> Dict[str, Dict[str, Any]]:
     """
-    Считывает .ftl файл и возвращает словарь с сырыми значениями:
-    {
-        'ent-CMOPDA': {'name': 'КПК главного врача', 'desc': '...'},
-        ...
-    }
+    Считывает .ftl файл с поддержкой многострочных значений 
+    и возвращает словарь с сырыми данными.
     """
-    ftl_data = {}
-    current_id = None
+    ftl_data: Dict[str, Dict[str, Any]] = {}
+    current_id: Optional[str] = None
+    current_attr: Optional[str] = None
 
-    with open(file_path, 'r', encoding='utf-8') as f:
+    with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
         for line in f:
-            line_str = line.strip()
-            
+            raw_line = line.rstrip('\r\n')
+            stripped = raw_line.strip()
+
             # Пропускаем пустые строки и комментарии
-            if not line_str or line_str.startswith('#'):
+            if not stripped or stripped.startswith('#'):
                 continue
 
-            # Обработка атрибутов (.desc = ..., .suffix = ...)
-            if line_str.startswith('.'):
-                if current_id and '=' in line_str:
-                    attr_part, val_part = line_str.split('=', 1)
-                    attr_name = attr_part.lstrip('.').strip()
-                    val_str = val_part.strip()
-
-                    if attr_name == 'suffix':
-                        # Удаляем фигурные скобки, кавычки и пробелы
-                        cleaned_val = val_str.strip('{} ').strip('"\'')
-                        suffixes = [s.strip().strip('"\'') for s in cleaned_val.split(',') if s.strip()]
-                        ftl_data[current_id][attr_name] = suffixes
-                    else:
-                        ftl_data[current_id][attr_name] = val_str
-
-            # Обработка основных ключей (ent-MedicalPDA = ...)
-            elif '=' in line_str:
-                key_part, val_part = line_str.split('=', 1)
+            # Основной ключ сущности (например, ent-MedicalPDA = ...)
+            if not raw_line.startswith((' ', '\t')) and '=' in stripped and not stripped.startswith('.'):
+                key_part, val_part = stripped.split('=', 1)
                 current_id = key_part.strip()
-                ftl_data[current_id] = {
-                    'name': val_part.strip()
-                }
+                current_attr = 'name'
+                ftl_data[current_id] = {current_attr: val_part.strip()}
+            
+            # Атрибут (.desc = ...) или многострочное продолжение
+            elif current_id:
+                if stripped.startswith('.'):
+                    attr_part, val_part = stripped.split('=', 1) if '=' in stripped else (stripped, '')
+                    current_attr = attr_part.lstrip('.').strip()
+                    val_str = val_part.strip()
+                else:
+                    # Это строка продолжения (multiline)
+                    val_str = stripped
+
+                if current_attr not in ftl_data[current_id]:
+                    ftl_data[current_id][current_attr] = ""
+
+                existing = ftl_data[current_id][current_attr]
+                if isinstance(existing, str):
+                    if existing:
+                        # Объединяем через пробел или перенос строки
+                        ftl_data[current_id][current_attr] = existing + " " + val_str
+                    else:
+                        ftl_data[current_id][current_attr] = val_str
+
+    # Постобработка списков (например, suffix)
+    for eid, attrs in ftl_data.items():
+        if 'suffix' in attrs and isinstance(attrs['suffix'], str):
+            cleaned_val = attrs['suffix'].strip('{} ').strip('"\'')
+            suffixes = [s.strip().strip('"\'') for s in cleaned_val.split(',') if s.strip()]
+            attrs['suffix'] = suffixes
 
     return ftl_data
 
 
-def resolve_ftl_references(ftl_data):
+def resolve_ftl_references(ftl_data: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """
-    Рекурсивно подставляет ссылки вида { ent-MedicalPDA } 
-    и { ent-MedicalPDA.desc } в значения.
+    Рекурсивно подставляет ссылки с защитой от циклов и кэшированием.
     """
     ref_pattern = re.compile(r'\{\s*([a-zA-Z0-9_-]+)(?:\.([a-zA-Z0-9_-]+))?\s*\}')
+    memo: Dict[str, str] = {}
 
-    def get_value(entity_id, attr_name=None):
+    def get_value(entity_id: str, attr_name: Optional[str] = None) -> str:
         if entity_id not in ftl_data:
             return ""
         entity = ftl_data[entity_id]
         val = entity.get(attr_name, "") if attr_name else entity.get('name', "")
         
-        # Если ссылаются на список (например, suffix), превращаем обратно в строку
         if isinstance(val, list):
             return ", ".join(val)
-        return val
+        return str(val)
 
-    def resolve_string(text):
-        curr_val = text
-        for _ in range(5):
-            matches = list(ref_pattern.finditer(curr_val))
-            if not matches:
-                break
-            
-            new_val = curr_val
-            for match in reversed(matches):
-                target_id = match.group(1)
-                target_attr = match.group(2)
-                replacement = get_value(target_id, target_attr)
-                
-                start, end = match.span()
-                new_val = new_val[:start] + replacement + new_val[end:]
-            
-            curr_val = new_val
-        return curr_val
+    def resolve_string(text: str, visiting: Optional[Set[str]] = None) -> str:
+        if visiting is None:
+            visiting = set()
 
-    resolved_data = {}
+        if text in memo:
+            return memo[text]
+
+        def replace_match(match) -> str:
+            target_id = match.group(1)
+            target_attr = match.group(2)
+            ref_key = f"{target_id}.{target_attr}" if target_attr else target_id
+
+            # Защита от бесконечной рекурсии (циклических ссылок)
+            if ref_key in visiting:
+                return match.group(0) # Оставляем как есть или возвращаем пустую строку
+
+            visiting.add(ref_key)
+            try:
+                raw_val = get_value(target_id, target_attr)
+                return resolve_string(raw_val, visiting)
+            finally:
+                visiting.remove(ref_key)
+
+        result = ref_pattern.sub(replace_match, text)
+        memo[text] = result
+        return result
+
+    resolved_data: Dict[str, Dict[str, Any]] = {}
 
     for eid, attrs in ftl_data.items():
         resolved_data[eid] = {}
@@ -96,12 +115,11 @@ def resolve_ftl_references(ftl_data):
     return resolved_data
 
 
-def load_ftl_directory(directory_path):
+def load_ftl_directory(directory_path: str) -> Dict[str, Dict[str, Any]]:
     """Обходит папку, собирает все .ftl файлы и разрешает ссылки."""
     root_dir = Path(directory_path)
-    combined_raw_db = {}
+    combined_raw_db: Dict[str, Dict[str, Any]] = {}
 
-    # 1. Сбор данных из всех .ftl файлов
     for file_path in root_dir.rglob('*.ftl'):
         try:
             file_data = parse_ftl_file(file_path)
@@ -109,12 +127,10 @@ def load_ftl_directory(directory_path):
         except Exception as e:
             print(f"Ошибка чтения FTL файла {file_path}: {e}")
 
-    # 2. Разрешение ссылок
     return resolve_ftl_references(combined_raw_db)
 
+
 if __name__ == "__main__":
-    dir = "Dir/To/Test"
-    ftl_db = load_ftl_directory(dir)
-    print(ftl_db)
-    print("-----")
-    print({key: val.get('suffix') for key, val in ftl_db.items()})
+    target_dir = "Dir/To/Test"
+    ftl_db = load_ftl_directory(target_dir)
+    print(f"Загружено сущностей: {len(ftl_db)}")

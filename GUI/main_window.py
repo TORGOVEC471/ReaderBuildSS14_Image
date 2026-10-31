@@ -5,9 +5,9 @@ from PyQt6.QtWidgets import (
     QPushButton, QLineEdit, QDialog,
 )
 from PyQt6.QtGui import QPixmap, QColor, QFont, QPainter
-from PyQt6.QtCore import Qt, QSettings
+from PyQt6.QtCore import Qt, QSettings, QTimer
 from pathlib import Path
-from GUI.styles import COLUMNS, PAGE_SIZE
+from GUI.styles import (COLUMNS, PAGE_SIZE, menu_bar_style)
 from GUI.widgets import ClickableLabel
 from GUI.dialogs import ImageDetailDialog, SettingsDialog
 from GUI.compositor import SceneBuilderDialog
@@ -18,6 +18,14 @@ class MainWindow(QMainWindow):
     def __init__(self, items):
         super().__init__()
         self.items = items
+        self.filtered_items = items
+        self.loaded_count = 0
+
+        # Таймер для дебаунса поиска (чтобы не фризило при вводе)
+        self.search_timer = QTimer()
+        self.search_timer.setSingleShot(True)
+        self.search_timer.setInterval(200) # задержка 200 мс
+        self.search_timer.timeout.connect(self._execute_filter)
 
         self.setWindowTitle("ReaderBuildSS14_Image")
         self.setFixedSize(1200, 800)
@@ -101,14 +109,17 @@ class MainWindow(QMainWindow):
             self.load_next_batch()
 
     def filter_items(self, text: str):
-        """Срабатывает при вводе текста в строку поиска."""
-        query = text.strip().lower()
+        """Запускает таймер фильтрации (дебаунс)"""
+        self.search_query = text.strip().lower()
+        self.search_timer.start()
+
+    def _execute_filter(self):
+        """Реальная логика фильтрации, вызываемая после паузы ввода"""
+        query = self.search_query
 
         if not query:
-            # Если поле поиска пустое, показываем все элементы
             self.filtered_items = self.items
         else:
-            # Ищем совпадения по названию карточки (title) ИЛИ по имени файла (path)
             self.filtered_items = [
                 item for item in self.items
                 if query in str(item.get("id", "")).lower()
@@ -116,8 +127,6 @@ class MainWindow(QMainWindow):
                 or query in os.path.basename(item.get("path", "")).lower()
                 or query.lower() in [x.lower() for x in item.get("suffix", [])]
                 or any(query.lower() in x.lower() for x in (item.get("suffix_ftl") or []) if isinstance(x, str))
-                # or query in str(item.get("parent", "")).lower() # Возможно в будущем  будет фильтр для поиска по родителям
-                # or query.lower() in [x.lower() for x in item.get("parents_chain", [])]
             ]
 
         self.reset_and_render()
@@ -342,29 +351,7 @@ class MainWindow(QMainWindow):
         """Создаёт меню для левой стороны программы"""
         menu_bar = QFrame()
         menu_bar.setFixedWidth(220)
-        menu_bar.setStyleSheet("""
-            QFrame {
-                background-color: #2c3e50;
-                border: none;
-            }
-            QPushButton {
-                color: #ecf0f1;
-                background-color: transparent;
-                border: none;
-                padding: 12px 15px;
-                text-align: left;
-                font-size: 14px;
-                font-weight: bold;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #34495e;
-                color: #ffffff;
-            }
-            QPushButton:pressed {
-                background-color: #1abc9c;
-            }
-        """)
+        menu_bar.setStyleSheet(menu_bar_style)
 
         menu_bar_layout = QVBoxLayout(menu_bar)
         menu_bar_layout.setContentsMargins(10, 20, 10, 20)
@@ -382,9 +369,8 @@ class MainWindow(QMainWindow):
         # Поле ввода поиска
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("🔍 Поиск по названию...")
-        # Подключаем сигнал textChanged к методу фильтрации
+        # Подключаем к методу запуска таймера вместо прямого вызова
         self.search_input.textChanged.connect(self.filter_items)
-        menu_bar_layout.addWidget(self.search_input)
 
         btn_settings = QPushButton("⚙️ Настройки")
         btn_settings.clicked.connect(self.on_settings_clicked)

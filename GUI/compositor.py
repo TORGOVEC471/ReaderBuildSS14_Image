@@ -10,7 +10,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap, QPainter, QColor
 
 class LayerSelectorDialog(QDialog):
-    """Окно выбора элемента из базы данных через ваш поиск."""
+    """Окно выбора элемента из базы данных."""
     def __init__(self, items: list, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Выбор элемента для композитора")
@@ -47,7 +47,7 @@ class LayerSelectorDialog(QDialog):
 
     def populate_list(self, items_to_show):
         self.list_widget.clear()
-        for item in items_to_show[:100]:  # Ограничение для производительности при поиске
+        for item in items_to_show[:100]:  # Ограничение для производительности
             item_id = item.get("id", "Без ID")
             name_ftl = item.get("name_ftl", "")
             display_text = f"{item_id}" + (f" ({name_ftl})" if name_ftl else "")
@@ -80,15 +80,16 @@ class LayerSelectorDialog(QDialog):
             self.accept()
 
 class SceneBuilderDialog(QDialog):
-    """Главное окно сборщика сцены с поддержкой внутренних слоев и покраски."""
+    """Главное окно сборщика сцены с оптимизированным рендером и кэшированием."""
     def __init__(self, items: list, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Сборщик изображений и сцен (Scene Builder)")
         self.setMinimumSize(950, 750)
         self.items = items
 
-        # Структура слоя сцены:
-        # {"item": dict, "state": str, "frame": int, "enabled": bool, "custom_color": str}
+        # Кэш для ускорения отрисовки спрайтов: ключ -> QPixmap
+        self._pixmap_cache = {}
+
         self.scene_layers = []
 
         layout = QHBoxLayout(self)
@@ -143,7 +144,7 @@ class SceneBuilderDialog(QDialog):
         self.settings_group = QGroupBox("⚙️ Настройки выбранного слоя")
         settings_layout = QVBoxLayout(self.settings_group)
 
-        # Выбор состояния (state)
+        # Состояние
         state_layout = QHBoxLayout()
         state_layout.addWidget(QLabel("Состояние:"))
         self.state_combo = QComboBox()
@@ -151,7 +152,7 @@ class SceneBuilderDialog(QDialog):
         state_layout.addWidget(self.state_combo)
         settings_layout.addLayout(state_layout)
 
-        # Выбор цвета (Color Picker)
+        # Цвет
         color_layout = QHBoxLayout()
         color_layout.addWidget(QLabel("Цвет объекта:"))
         self.btn_color_picker = QPushButton("🎨 Выбрать цвет")
@@ -164,7 +165,7 @@ class SceneBuilderDialog(QDialog):
         color_layout.addWidget(self.lbl_color_preview)
         settings_layout.addLayout(color_layout)
 
-        # Чекбокс видимости
+        # Активность
         self.enabled_checkbox = QCheckBox("Слой активен (отображать)")
         self.enabled_checkbox.toggled.connect(self.on_enabled_toggled)
         settings_layout.addWidget(self.enabled_checkbox)
@@ -179,7 +180,6 @@ class SceneBuilderDialog(QDialog):
         self.render_scene()
 
     def get_item_states(self, item: dict) -> list:
-        """Безопасное получение списка состояний предмета."""
         raw_states = item.get("states")
         if not raw_states:
             single_state = item.get("state", "default")
@@ -194,11 +194,10 @@ class SceneBuilderDialog(QDialog):
             default_state = "equipped-INNERCLOTHING" if "equipped-INNERCLOTHING" in states else (states[0] if states else "default")
 
             initial_color = ""
-            if "layers" in item and len(item["layers"]) > 0:
-                for sub_l in item["layers"]:
-                    if "color" in sub_l:
-                        initial_color = sub_l["color"]
-                        break
+            for sub_l in item.get("layers", []):
+                if "color" in sub_l:
+                    initial_color = sub_l["color"]
+                    break
 
             self.scene_layers.append({
                 "item": item,
@@ -247,8 +246,7 @@ class SceneBuilderDialog(QDialog):
         self.enabled_checkbox.blockSignals(True)
 
         self.state_combo.clear()
-        states = self.get_item_states(item)
-        self.state_combo.addItems(states)
+        self.state_combo.addItems(self.get_item_states(item))
 
         current_state = layer_data["state"]
         state_idx = self.state_combo.findText(current_state)
@@ -310,9 +308,36 @@ class SceneBuilderDialog(QDialog):
         painter.end()
         return result
 
+    def get_cached_sub_pixmap(self, path: Path, frame_idx: int, native_w: int, native_h: int, color: str) -> QPixmap:
+        """Получение спрайта с кэшированием в памяти для ускорения отрисовки."""
+        cache_key = (str(path), frame_idx, color)
+        if cache_key in self._pixmap_cache:
+            return self._pixmap_cache[cache_key]
+
+        if not path.exists():
+            return QPixmap()
+
+        full_pixmap = QPixmap(str(path))
+        if full_pixmap.isNull():
+            return QPixmap()
+
+        # Нарезка спрайт-листа
+        if full_pixmap.width() > native_w and full_pixmap.width() % native_w == 0:
+            cols = full_pixmap.width() // native_w
+            col = frame_idx % cols
+            row = frame_idx // cols
+            sub_pixmap = full_pixmap.copy(col * native_w, row * native_h, native_w, native_h)
+        else:
+            sub_pixmap = full_pixmap
+
+        if color:
+            sub_pixmap = self.tint_pixmap(sub_pixmap, color)
+
+        self._pixmap_cache[cache_key] = sub_pixmap
+        return sub_pixmap
+
     def render_scene(self):
         native_w, native_h = 32, 32
-
         canvas = QPixmap(native_w, native_h)
         canvas.fill(Qt.GlobalColor.transparent)
 
@@ -326,69 +351,30 @@ class SceneBuilderDialog(QDialog):
                 item = layer_data["item"]
                 state = layer_data["state"]
                 custom_color = layer_data["custom_color"]
+                frame_idx = layer_data["frame"]
+                item_path = Path(item.get("path", ""))
 
-                json_layers = item.get("layers", [])
+                # Единая логика для элементов с подслоями и обычных объектов (DRY)
+                sub_layers = item.get("layers", [])
+                if not sub_layers:
+                    sub_layers = [{"state": state, "color": custom_color}]
 
-                if json_layers:
-                    # Рендеринг по подслоям из JSON
-                    for sub_layer in json_layers:
-                        sub_json_state = sub_layer.get("state", "")
-                        sub_color = custom_color if custom_color else sub_layer.get("color", "")
-                        
-                        # ПРИОРИТЕТ: Сначала ищем файл по выбранному пользователем состоянию (state)
-                        sprite_path = Path(item.get("path", "")) / f"{state}.png"
-                        
-                        # Если его нет, пробуем дефолтное состояние из JSON-подслоя
-                        if not sprite_path.exists() and sub_json_state:
-                            sprite_path = Path(item.get("path", "")) / f"{sub_json_state}.png"
-                            
-                        if not sprite_path.exists():
-                            continue
+                for sub_layer in sub_layers:
+                    sub_json_state = sub_layer.get("state", "")
+                    sub_color = custom_color if custom_color else sub_layer.get("color", "")
+                    
+                    # Приоритет состояния
+                    sprite_path = item_path / f"{state}.png"
+                    if not sprite_path.exists() and sub_json_state:
+                        sprite_path = item_path / f"{sub_json_state}.png"
 
-                        full_pixmap = QPixmap(str(sprite_path))
-                        if full_pixmap.isNull():
-                            continue
-
-                        frame_idx = layer_data["frame"]
-                        if full_pixmap.width() > native_w and full_pixmap.width() % native_w == 0:
-                            cols = full_pixmap.width() // native_w
-                            col = frame_idx % cols
-                            row = frame_idx // cols
-                            sub_pixmap = full_pixmap.copy(col * native_w, row * native_h, native_w, native_h)
-                        else:
-                            sub_pixmap = full_pixmap
-
-                        if sub_color:
-                            sub_pixmap = self.tint_pixmap(sub_pixmap, sub_color)
-
-                        cx = (native_w - sub_pixmap.width()) // 2
-                        cy = (native_h - sub_pixmap.height()) // 2
-                        painter.drawPixmap(cx, cy, sub_pixmap)
-                else:
-                    # Обычный предмет без внутренних подслоев
-                    sprite_path = Path(item.get("path", "")) / f"{state}.png"
-                    if not sprite_path.exists():
+                    sub_pixmap = self.get_cached_sub_pixmap(sprite_path, frame_idx, native_w, native_h, sub_color)
+                    if sub_pixmap.isNull():
                         continue
 
-                    full_pixmap = QPixmap(str(sprite_path))
-                    if full_pixmap.isNull():
-                        continue
-
-                    frame_idx = layer_data["frame"]
-                    if full_pixmap.width() > native_w and full_pixmap.width() % native_w == 0:
-                        cols = full_pixmap.width() // native_w
-                        col = frame_idx % cols
-                        row = frame_idx // cols
-                        layer_pixmap = full_pixmap.copy(col * native_w, row * native_h, native_w, native_h)
-                    else:
-                        layer_pixmap = full_pixmap
-
-                    if custom_color:
-                        layer_pixmap = self.tint_pixmap(layer_pixmap, custom_color)
-
-                    cx = (native_w - layer_pixmap.width()) // 2
-                    cy = (native_h - layer_pixmap.height()) // 2
-                    painter.drawPixmap(cx, cy, layer_pixmap)
+                    cx = (native_w - sub_pixmap.width()) // 2
+                    cy = (native_h - sub_pixmap.height()) // 2
+                    painter.drawPixmap(cx, cy, sub_pixmap)
 
         display_pixmap = canvas.scaled(
             256, 256,
@@ -428,5 +414,11 @@ class SceneBuilderDialog(QDialog):
 
         file_path, _ = QFileDialog.getSaveFileName(self, "Сохранить сборку", "composite_scene.png", "PNG Images (*.png)")
         if file_path:
-            self.current_rendered_canvas.scaled(256, 256, Qt.AspectRatioMode.KeepAspectRatio).save(file_path, "PNG")
+            # Сохранение с Nearest Neighbor (FastTransformation) для сохранения четкости пикселей
+            exported = self.current_rendered_canvas.scaled(
+                256, 256, 
+                Qt.AspectRatioMode.KeepAspectRatio, 
+                Qt.TransformationMode.FastTransformation
+            )
+            exported.save(file_path, "PNG")
             QMessageBox.information(self, "Успех", f"Сцена успешно сохранена:\n{file_path}")

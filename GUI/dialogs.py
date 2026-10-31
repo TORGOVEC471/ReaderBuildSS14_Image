@@ -8,8 +8,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QPixmap, QColor, QFont, QDesktopServices, QPainter
 from PyQt6.QtCore import Qt, QUrl, QSettings, QPoint
 import json
-import img_tools.GIF as ToGIF
-import img_tools.IMAGE as ToIMAGE
+import img_tools.gif_tool as ToGIF
+import img_tools.img_tool as ToIMAGE
 from pathlib import Path
 from GUI.styles import (btn_style, group_style)
 from GUI.threads import SaveDataThread
@@ -17,24 +17,30 @@ from config import SETTINGS_FILE, PATH_BUILD
 
 # Модальное окно с увеличенной картинкой и кнопками
 class ImageDetailDialog(QDialog):
-    """Диалоговое окно детального просмотра изображения."""
     def __init__(self, item: dict, parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose) # Уничтожит объект при закрытии окна
-
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.item = item
         self.setWindowTitle(f"Просмотр: {item.get('id', 'Элемент')}")
         self.setMinimumSize(400, 500)
         
-        # Инициализация конфигурации слоев (видимость и текущий кадр)
+        # Предварительно вычисляем базовые пути (чтобы не дублировать код)
+        self.base_textures_path = self._resolve_base_textures_path()
+
+        # Инициализация конфигурации слоев с кэшированием frame_count
         self.layer_configs = []
         for layer in self.item.get("layers", []):
-            # Если в YAML явно указано visible: false, по умолчанию выключаем слой
             default_visible = layer.get("visible", True)
+            state_name = layer.get("state", "")
+            
+            # Кэшируем frame_count один раз при инициализации, а не при открытии меню!
+            frame_count = self._get_layer_frame_count(layer, state_name)
+            
             self.layer_configs.append({
                 "layer": layer,
                 "enabled": default_visible,
-                "frame": 0
+                "frame": 0,
+                "frame_count": frame_count
             })
 
         # Основной макет окна
@@ -152,61 +158,61 @@ class ImageDetailDialog(QDialog):
         self.btn_layers.setVisible(checked)
         self.change_state(self.item.get("state", ""))
 
-    def show_layers_menu(self):
-        """Выпадающее меню для настройки видимости и кадров слоев."""
-        menu = QMenu(self)
-        
+    def _resolve_base_textures_path(self) -> Path | None:
+        """Централизованный поиск папки текстур."""
         file_path = Path(self.item.get("file", ""))
         resources_dir = next((p for p in file_path.parents if p.name == "Resources"), None)
-        base_textures_path = resources_dir / "Textures" if resources_dir else None
+        return resources_dir / "Textures" if resources_dir else None
 
+    def _get_layer_frame_count(self, layer: dict, state_name: str) -> int:
+        """Определяет количество кадров слоя из meta.json с обработкой ошибок."""
+        if not self.base_textures_path:
+            return 1
+            
+        sprite_rel_path = layer.get("sprite")
+        layer_dir = self.base_textures_path / sprite_rel_path if sprite_rel_path else Path(self.item.get("path", ""))
+        meta_path = layer_dir / "meta.json"
+        
+        if not meta_path.exists():
+            return 1
+            
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta_data = json.load(f)
+                for st in meta_data.get("states", []):
+                    if st.get("name") == state_name:
+                        return st.get("frameCount", 1)
+        except Exception as e:
+            print(f"[WARNING] Не удалось прочитать {meta_path}: {e}")
+            
+        return 1
+
+    def show_layers_menu(self):
+        """Выпадающее меню теперь работает быстро, так как данные уже закэшированы."""
+        menu = QMenu(self)
+        
         for i, config in enumerate(self.layer_configs):
             layer = config["layer"]
             state_name = layer.get("state", "")
             maps = layer.get("map", [f"Слой {i+1}"])
-            # Извлекаем красивое имя из enum (например, "DoorVisualLayers.Base" -> "Base")
             layer_name = str(maps[0]).split(".")[-1] if maps else f"Слой {i+1}"
-            
-            # Определяем количество кадров (frameCount) из meta.json
-            frame_count = 1
-            if base_textures_path:
-                sprite_rel_path = layer.get("sprite")
-                layer_dir = base_textures_path / sprite_rel_path if sprite_rel_path else Path(self.item.get("path", ""))
-                meta_path = layer_dir / "meta.json"
-                if meta_path.exists():
-                    try:
-                        with open(meta_path, "r", encoding="utf-8") as f:
-                            meta_data = json.load(f)
-                            for st in meta_data.get("states", []):
-                                if st.get("name") == state_name:
-                                    frame_count = st.get("frameCount", 1)
-                                    break
-                    except Exception:
-                        pass
+            frame_count = config["frame_count"]
 
-            # Виджет для пункта меню (Чекбокс + Спиннер кадров при необходимости)
             widget = QWidget()
             h_layout = QHBoxLayout(widget)
             h_layout.setContentsMargins(8, 4, 8, 4)
 
             chk = QCheckBox(f"{layer_name} ({state_name})")
             chk.setChecked(config["enabled"])
-            
-            def make_toggle_handler(idx=i, c=chk):
-                return lambda state: self.toggle_layer(idx, c.isChecked())
-            chk.toggled.connect(make_toggle_handler())
+            chk.toggled.connect(lambda checked, idx=i: self.toggle_layer(idx, checked))
             h_layout.addWidget(chk)
 
             if frame_count > 1:
-                lbl = QLabel("Кадр:")
-                h_layout.addWidget(lbl)
+                h_layout.addWidget(QLabel("Кадр:"))
                 spin = QSpinBox()
                 spin.setRange(0, frame_count - 1)
                 spin.setValue(config["frame"])
-                
-                def make_spin_handler(idx=i, s=spin):
-                    return lambda val: self.change_layer_frame(idx, val)
-                spin.valueChanged.connect(make_spin_handler())
+                spin.valueChanged.connect(lambda val, idx=i: self.change_layer_frame(idx, val))
                 h_layout.addWidget(spin)
 
             action = QWidgetAction(menu)
