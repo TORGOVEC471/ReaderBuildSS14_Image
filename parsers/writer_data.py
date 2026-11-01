@@ -67,6 +67,7 @@ def find_ftl_info(entity: dict, parsed_ftl: dict) -> tuple[str | None, str | Non
 
 
 def save_data_build(target_dir_yml: Path, target_dir_ftl: Path):
+    print(f"Начинаем запись в {DATA_FILE}")
     sprite_data_list = []
     parsed_data = YMLF.process_prototypes(target_dir_yml)
     parsed_ftl = FTLR.load_ftl_directory(target_dir_ftl)

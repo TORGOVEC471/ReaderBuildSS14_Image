@@ -162,6 +162,9 @@ class MainWindow(QMainWindow):
         native_pixmap = QPixmap(native_w, native_h)
         native_pixmap.fill(Qt.GlobalColor.transparent)
 
+        # Флаг для отслеживания успешной отрисовки хотя бы одного слоя
+        has_drawn_content = False
+
         # Если конфиги слоев не переданы явно, берем их из словаря item["layers"]
         if layer_configs is None:
             layers = target_item.get("layers", [])
@@ -248,6 +251,10 @@ class MainWindow(QMainWindow):
                     final_y = center_y + offset_y
 
                     painter.drawPixmap(final_x, final_y, layer_pixmap)
+                    has_drawn_content = True # помечаем, что что-то нарисовали
+
+        # Сохраняем флаг в экземпляр класса для использования в create_card
+        self._last_render_has_content = has_drawn_content
 
         if display_size:
             return native_pixmap.scaled(
@@ -274,10 +281,11 @@ class MainWindow(QMainWindow):
         card_layout.setContentsMargins(8, 8, 8, 8)
         card_layout.setSpacing(6)
 
-        # Получаем готовый собранный и окрашенный холст (в оригинальном разрешении предмета)
+        # Получаем готовый собранный и окрашенный холст
         native_pixmap = self.render_color_image(item=item)
 
-        if not native_pixmap.isNull():
+        # Проверяем, действительно ли что-то было отрисовано
+        if getattr(self, '_last_render_has_content', False) and not native_pixmap.isNull():
             # Масштабируем под размер превью карточки (64x64)
             scaled_sprite = native_pixmap.scaled(
                 64, 64,

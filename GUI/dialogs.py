@@ -448,7 +448,7 @@ class SettingsDialog(QDialog):
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose) # Уничтожит объект при закрытии окна
 
         self.setWindowTitle("Настройки")
-        self.resize(600, 250)
+        self.setFixedSize(800, 600)
 
         # Компоновка элементов
         main_layout = QVBoxLayout()
@@ -471,8 +471,12 @@ class SettingsDialog(QDialog):
         browse_save_btn = QPushButton("Обзор...")
         browse_save_btn.setStyleSheet(btn_style)
 
-        group_saves_layout.addWidget(QLabel("Путь для сохранения файлов:"))
-        group_saves_layout.addWidget(QLabel("Точка (.) = та же папка где находится главный файл"))
+        saves_label = QLabel("""
+Путь для сохранения файлов:<br>
+Точка (.) = та же папка где находится главный файл
+        """)
+
+        group_saves_layout.addWidget(saves_label)
 
         btn_line_save_layout.addWidget(self.path_save_input)
         btn_line_save_layout.addWidget(browse_save_btn)
@@ -499,7 +503,13 @@ class SettingsDialog(QDialog):
         browse_build_btn = QPushButton("Обзор...")
         browse_build_btn.setStyleSheet(btn_style)
 
-        group_build_layout.addWidget(QLabel("Путь сборки"))
+        build_label = QLabel("""
+Путь сборки<br><br>
+Впишите путь до сборки (space_station).<br>
+Для работы программы необходимы папки Locale, Prototypes, Textures, которые должны находиться в Resources!
+        """)
+
+        group_build_layout.addWidget(build_label)
 
         btn_line_build_layout.addWidget(self.path_build_input)
         btn_line_build_layout.addWidget(browse_build_btn)
@@ -518,9 +528,16 @@ class SettingsDialog(QDialog):
         group_reloads.setStyleSheet(group_style)
         group_reloads_layout = QVBoxLayout()
 
+        reload_label = QLabel("""
+Перед перезапуском, в случае если вы что-то поменяли в пути сборки или впервые его установили:<br>
+* Нажмите "OK" и перезапустите программу, чтобы применить изменения.<br>
+* После этого нажмите "ПЕРЕЗАГРУИТЬ", и данные будут установлены!
+        """)
+
         self.btn_reload = QPushButton("ПЕРЕЗАГРУЗИТЬ")
         self.btn_reload.setStyleSheet(btn_style)
 
+        group_reloads_layout.addWidget(reload_label)
         group_reloads_layout.addWidget(self.btn_reload)
         group_reloads.setLayout(group_reloads_layout)
 
