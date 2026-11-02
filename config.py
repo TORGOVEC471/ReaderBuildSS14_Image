@@ -9,6 +9,14 @@ def get_base_path():
     else:
         return Path(__file__).parent.resolve()
 
+def get_base_path_ico():
+    # Если приложение запущено как скомпилированный EXE
+    if hasattr(sys, '_MEIPASS'):
+        return Path(sys._MEIPASS)
+    # Если приложение запущено как обычный .py скрипт
+    return Path(__file__).resolve().parent
+
+
 BASE_DIR = get_base_path()
 SETTINGS_FILE = BASE_DIR / "settings.ini"
 DATA_FILE = BASE_DIR / "data.json"
@@ -30,5 +38,4 @@ config.read(SETTINGS_FILE, encoding="utf-8")
 PATH_BUILD = Path(config["General"]["path_build"])
 PATH_SAVES = Path(config["General"]["path_saves"])
 
-icon_path = str(get_base_path() / "assets/ReaderIcon.ico")
-print(icon_path)
+icon_path = str(get_base_path_ico() / "assets/ReaderIcon.ico")
