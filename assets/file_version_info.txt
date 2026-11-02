@@ -5,8 +5,8 @@ VSVersionInfo(
   ffi=FixedFileInfo(
     # filevers и prodvers должны содержать 4 числа.
     # Если версия 1.2.3, то пишется (1, 2, 3, 0)
-    filevers=(1, 0, 3, 0),
-    prodvers=(1, 0, 3, 0),
+    filevers=(1, 0, 4, 0),
+    prodvers=(1, 0, 4, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -21,13 +21,13 @@ VSVersionInfo(
           '041904B0',
           [
             StringStruct('CompanyName', 'TorgovecNoComp'),
-            StringStruct('FileDescription', 'Программа для чтения билдов игры ss14, извлечения из них данных и последующей сборки в изображения или анимации'),
-            StringStruct('FileVersion', '1.0.3.0'),
+            StringStruct('FileDescription', 'Чтец билдов ss14'),
+            StringStruct('FileVersion', '1.0.4.0'),
             StringStruct('InternalName', 'ReaderBuildSS14'),
-            StringStruct('LegalCopyright', '\xa9 2026 Torgovec. Vse prava zaschischeny.'),
+            StringStruct('LegalCopyright', '\xa9 2026 Torgovec. Все права защищены.'),
             StringStruct('OriginalFilename', 'ReaderBuildSS14.exe'),
             StringStruct('ProductName', 'ReaderBuildSS14'),
-            StringStruct('ProductVersion', '1.0.3.0')
+            StringStruct('ProductVersion', '1.0.4.0')
           ]
         )
       ]
