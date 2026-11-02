@@ -4,14 +4,14 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QPushButton, QLineEdit, QDialog,
 )
-from PyQt6.QtGui import QPixmap, QColor, QFont, QPainter
+from PyQt6.QtGui import QPixmap, QColor, QFont, QPainter, QIcon
 from PyQt6.QtCore import Qt, QSettings, QTimer
 from pathlib import Path
 from GUI.styles import (COLUMNS, PAGE_SIZE, menu_bar_style)
 from GUI.widgets import ClickableLabel
 from GUI.dialogs import ImageDetailDialog, SettingsDialog
 from GUI.compositor import SceneBuilderDialog
-from config import SETTINGS_FILE
+from config import SETTINGS_FILE, icon_path
 
 # Главное окно
 class MainWindow(QMainWindow):
@@ -29,6 +29,8 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("ReaderBuildSS14_Image")
         self.setFixedSize(1200, 800)
+
+        self.setWindowIcon(QIcon(icon_path))
 
         # Переменные полигинации
         self.filtered_items = items

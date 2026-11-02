@@ -1,4 +1,5 @@
 import sys
+import ctypes
 from PyQt6.QtWidgets import (
     QApplication, QMessageBox
 )
@@ -25,6 +26,12 @@ if __name__ == "__main__":
 
     # print(items)
     print("Данные загружены с data.json!")
+
+    # Сообщаем Windows, что это отдельное приложение со своим идентификатором модели
+    if sys.platform == "win32":
+        myappid = "TorgovecNoComp.ReaderBuildSS14.v1.0.3"  # Произвольная уникальная строка
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+
 
     window = MainWindow(items)
     window.show()

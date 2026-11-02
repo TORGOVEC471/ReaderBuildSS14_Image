@@ -5,9 +5,9 @@ from pathlib import Path
 def get_base_path():
     """Возвращает папку, где лежит .exe (или главный скрипт)"""
     if getattr(sys, 'frozen', False):
-        return Path(sys.executable).parent
+        return Path(sys.executable).parent.resolve()
     else:
-        return Path(__file__).parent
+        return Path(__file__).parent.resolve()
 
 BASE_DIR = get_base_path()
 SETTINGS_FILE = BASE_DIR / "settings.ini"
@@ -29,3 +29,6 @@ config.read(SETTINGS_FILE, encoding="utf-8")
 # Экспортируем готовые переменные, чтобы их можно было импортировать в любой файл
 PATH_BUILD = Path(config["General"]["path_build"])
 PATH_SAVES = Path(config["General"]["path_saves"])
+
+icon_path = str(get_base_path() / "assets/ReaderIcon.ico")
+print(icon_path)

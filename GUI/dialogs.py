@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QGroupBox, QDialogButtonBox, QFileDialog, QMessageBox,
     QMenu, QCheckBox, QWidgetAction, QSpinBox
 )
-from PyQt6.QtGui import QPixmap, QColor, QFont, QDesktopServices, QPainter
+from PyQt6.QtGui import QPixmap, QColor, QFont, QDesktopServices, QPainter, QIcon
 from PyQt6.QtCore import Qt, QUrl, QSettings, QPoint
 import json
 import img_tools.gif_tool as ToGIF
@@ -13,7 +13,7 @@ import img_tools.img_tool as ToIMAGE
 from pathlib import Path
 from GUI.styles import (btn_style, group_style)
 from GUI.threads import SaveDataThread
-from config import SETTINGS_FILE, PATH_BUILD
+from config import SETTINGS_FILE, PATH_BUILD, icon_path
 import numpy as np
 
 # Модальное окно с увеличенной картинкой и кнопками
@@ -495,6 +495,8 @@ class SettingsDialog(QDialog):
 
         self.setWindowTitle("Настройки")
         self.setFixedSize(800, 600)
+
+        self.setWindowIcon(QIcon(icon_path))
 
         # Компоновка элементов
         main_layout = QVBoxLayout()
