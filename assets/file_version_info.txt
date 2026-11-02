@@ -1,3 +1,4 @@
+# UTF-8
 # VSVersionInfo struct string layout.
 # Don't remove Google cache, standard formatting or variable names.
 VSVersionInfo(
@@ -12,21 +13,25 @@ VSVersionInfo(
     fileType=0x1,
     subtype=0x0,
     date=(0, 0)
-    ),
+  ),
   kids=[
     StringFileInfo(
       [
-      StringTable(
-        '041904b0', # 0419 = Русский язык, 04b0 = Unicode
-        [StringStruct('CompanyName', 'TorgovecNoComp'),
-        StringStruct('FileDescription', 'Программа для чтения билдов игры ss14, извлечения из них данных и последующей сборки в изображения или анимации'),
-        StringStruct('FileVersion', '1.0.3.0'),
-        StringStruct('InternalName', 'ReaderBuildSS14'),
-        StringStruct('LegalCopyright', '© 2026 Torgovec. Все права защищены.'),
-        StringStruct('OriginalFilename', 'ReaderBuildSS14.exe'),
-        StringStruct('ProductName', 'ReaderBuildSS14'),
-        StringStruct('ProductVersion', '1.0.3.0')])
-      ]), 
-    VarFileInfo([VarVersionInfo('Translation', [1049, 1200])]) # 1049 = Русский язык
+        StringTable(
+          '041904B0',
+          [
+            StringStruct('CompanyName', 'TorgovecNoComp'),
+            StringStruct('FileDescription', 'Программа для чтения билдов игры ss14, извлечения из них данных и последующей сборки в изображения или анимации'),
+            StringStruct('FileVersion', '1.0.3.0'),
+            StringStruct('InternalName', 'ReaderBuildSS14'),
+            StringStruct('LegalCopyright', '\xa9 2026 Torgovec. Vse prava zaschischeny.'),
+            StringStruct('OriginalFilename', 'ReaderBuildSS14.exe'),
+            StringStruct('ProductName', 'ReaderBuildSS14'),
+            StringStruct('ProductVersion', '1.0.3.0')
+          ]
+        )
+      ]
+    ), 
+    VarFileInfo([VarStruct('Translation', [1049, 1200])])
   ]
 )
