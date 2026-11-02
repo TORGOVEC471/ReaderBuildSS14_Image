@@ -14,6 +14,7 @@ from pathlib import Path
 from GUI.styles import (btn_style, group_style)
 from GUI.threads import SaveDataThread
 from config import SETTINGS_FILE, PATH_BUILD
+import numpy as np
 
 # Модальное окно с увеличенной картинкой и кнопками
 class ImageDetailDialog(QDialog):
@@ -165,27 +166,48 @@ class ImageDetailDialog(QDialog):
         return resources_dir / "Textures" if resources_dir else None
 
     def _get_layer_frame_count(self, layer: dict, state_name: str) -> int:
-        """Определяет количество кадров слоя из meta.json с обработкой ошибок."""
+        """Определяет количество кадров слоя из meta.json (по delays или frameCount) или по размерам файла."""
         if not self.base_textures_path:
             return 1
             
         sprite_rel_path = layer.get("sprite")
         layer_dir = self.base_textures_path / sprite_rel_path if sprite_rel_path else Path(self.item.get("path", ""))
-        meta_path = layer_dir / "meta.json"
+        item_state = self.item.get("state", "default")
+        st_name = state_name or item_state
         
-        if not meta_path.exists():
-            return 1
-            
-        try:
-            with open(meta_path, "r", encoding="utf-8") as f:
-                meta_data = json.load(f)
-                for st in meta_data.get("states", []):
-                    if st.get("name") == state_name:
-                        return st.get("frameCount", 1)
-        except Exception as e:
-            print(f"[WARNING] Не удалось прочитать {meta_path}: {e}")
-            
-        return 1
+        meta_path = layer_dir / "meta.json"
+        f_count = 1
+        
+        if meta_path.exists():
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta_data = json.load(f)
+                    for st in meta_data.get("states", []):
+                        if st.get("name") == st_name:
+                            if "delays" in st:
+                                l_delays = np.array(st["delays"]).flatten().tolist()
+                                f_count = len(l_delays)
+                            else:
+                                f_count = st.get("frameCount", 1)
+                            break
+            except Exception as e:
+                print(f"[WARNING] Не удалось прочитать {meta_path}: {e}")
+
+        # Автоопределение по размерам, если meta.json не помог
+        if f_count == 1:
+            layer_file_path = layer_dir / f"{st_name}.png"
+            if not layer_file_path.exists() or layer_file_path.is_dir():
+                layer_file_path = layer_dir / "default.png"
+            if layer_file_path.exists() and not layer_file_path.is_dir():
+                pix = QPixmap(str(layer_file_path))
+                if not pix.isNull():
+                    native_w = self.item.get("size", {}).get("x", 32) or 32
+                    native_h = self.item.get("size", {}).get("y", 32) or 32
+                    fw, fh = pix.width(), pix.height()
+                    if (fw > native_w or fh > native_h) and (fw % native_w == 0) and (fh % native_h == 0):
+                        f_count = (fw // native_w) * (fh // native_h)
+
+        return f_count
 
     def show_layers_menu(self):
         """Выпадающее меню теперь работает быстро, так как данные уже закэшированы."""
@@ -283,6 +305,8 @@ class ImageDetailDialog(QDialog):
         native_pixmap = QPixmap(native_w, native_h)
         native_pixmap.fill(Qt.GlobalColor.transparent)
 
+        item_state = self.item.get("state", "default")
+
         with QPainter(native_pixmap) as painter:
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
 
@@ -296,7 +320,7 @@ class ImageDetailDialog(QDialog):
                         continue
 
                     layer = config["layer"]
-                    state_name = layer.get("state")
+                    state_name = layer.get("state") or item_state
                     sprite_rel_path = layer.get("sprite")
 
                     if sprite_rel_path:
@@ -304,27 +328,29 @@ class ImageDetailDialog(QDialog):
                     else:
                         layer_dir = Path(self.item.get("path", ""))
 
-                    layer_file_path = layer_dir / f"{state_name}.png" if state_name else layer_dir
-
+                    layer_file_path = layer_dir / f"{state_name}.png"
                     if not layer_file_path.exists() or layer_file_path.is_dir():
-                        continue
+                        if (layer_dir / "default.png").exists():
+                            layer_file_path = layer_dir / "default.png"
+                        else:
+                            continue
 
                     full_pixmap = QPixmap(str(layer_file_path))
                     if full_pixmap.isNull():
                         continue
 
-                    # Если спрайт содержит несколько кадров (сетка или строка), вырезаем нужный кадр
+                    # Если спрайт содержит несколько кадров, берем текущий выбранный кадр
                     frame_idx = config.get("frame", 0)
+                    frame_count = config.get("frame_count", 1)
+                    if frame_count > 1:
+                        frame_idx = frame_idx % frame_count
+
                     if (full_pixmap.width() > native_w or full_pixmap.height() > native_h) and \
-                    (full_pixmap.width() % native_w == 0) and (full_pixmap.height() % native_h == 0):
+                       (full_pixmap.width() % native_w == 0) and (full_pixmap.height() % native_h == 0):
                         
                         frame_w = native_w
                         frame_h = native_h
-                        
-                        # Количество кадров в одной строке (колонок)
                         cols = full_pixmap.width() // native_w
-                        
-                        # Вычисляем колонку и строку для текущего frame_idx
                         col = frame_idx % cols
                         row = frame_idx // cols
                         
@@ -336,11 +362,11 @@ class ImageDetailDialog(QDialog):
                     if "color" in layer and layer["color"]:
                         layer_pixmap = self.apply_layer_color(layer_pixmap, layer["color"])
 
-                    layer_w = layer_pixmap.width()
-                    layer_h = layer_pixmap.height()
+                    lw = layer_pixmap.width()
+                    lh = layer_pixmap.height()
 
-                    center_x = (native_w - layer_w) // 2
-                    center_y = (native_h - layer_h) // 2
+                    center_x = (native_w - lw) // 2
+                    center_y = (native_h - lh) // 2
 
                     offset_x, offset_y = 0, 0
                     if "offset" in layer and layer["offset"]:
@@ -416,13 +442,33 @@ class ImageDetailDialog(QDialog):
         json_path = Path(self.item.get("path", "")) / "meta.json"
         state_name = self.item.get("state", "")
         file_name = self.item.get("id", "")
-        ToGIF.process_json_file(json_path, state_name, file_name, format="gif")
+        
+        item_data = None
+        if self.cb_builder.isChecked():
+            # Синхронизируем состояние слоев перед передачей
+            for i, config in enumerate(self.layer_configs):
+                if i < len(self.item.get("layers", [])):
+                    self.item["layers"][i]["enabled"] = config["enabled"]
+                    self.item["layers"][i]["frame"] = config["frame"]
+            item_data = self.item
+        
+        ToGIF.process_json_file(json_path, state_name, file_name, format="gif", item=item_data)
     
     def on_webp_clicked(self):
         json_path = Path(self.item.get("path", "")) / "meta.json"
         state_name = self.item.get("state", "")
         file_name = self.item.get("id", "")
-        ToGIF.process_json_file(json_path, state_name, file_name, format="webp")
+        
+        item_data = None
+        if self.cb_builder.isChecked():
+            # Синхронизируем состояние слоев перед передачей
+            for i, config in enumerate(self.layer_configs):
+                if i < len(self.item.get("layers", [])):
+                    self.item["layers"][i]["enabled"] = config["enabled"]
+                    self.item["layers"][i]["frame"] = config["frame"]
+            item_data = self.item
+
+        ToGIF.process_json_file(json_path, state_name, file_name, format="webp", item=item_data)
 
     def process_image_with_mode(self, mode: str):
             image_path = Path(f"{self.item.get('path', '')}/{self.item.get('state', '')}.png")
@@ -531,7 +577,7 @@ class SettingsDialog(QDialog):
         reload_label = QLabel("""
 Перед перезапуском, в случае если вы что-то поменяли в пути сборки или впервые его установили:<br>
 * Нажмите "OK" и перезапустите программу, чтобы применить изменения.<br>
-* После этого нажмите "ПЕРЕЗАГРУИТЬ", и данные будут установлены!
+* После этого нажмите "ПЕРЕЗАГРУЗИТЬ", и данные будут установлены!
         """)
 
         self.btn_reload = QPushButton("ПЕРЕЗАГРУЗИТЬ")
