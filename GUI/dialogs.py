@@ -154,6 +154,9 @@ class ImageDetailDialog(QDialog):
 
         layout.addLayout(main_btn_layout)
 
+        # Включение сборщика по умолчанию. Вниз потому-что иначе активируется до того как создаются другие элементы.
+        self.cb_builder.setChecked(True)
+
     def on_builder_toggled(self, checked: bool):
         """Поведение при включении/выключении режима Сборщик."""
         self.btn_layers.setVisible(checked)
