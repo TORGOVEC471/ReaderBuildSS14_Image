@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 import yaml
+from logger import logger
 
 # --- 1. Кастомный SafeLoader ---
 class SS14YamlLoader(yaml.SafeLoader):
@@ -120,7 +121,7 @@ def process_prototypes(directory_path):
                             'raw': item
                         }
         except Exception as e:
-            print(f"Ошибка при чтении файла {file_path}: {e}")
+            logger.error(f"Ошибка при чтении файла {file_path}: {e}")
 
     # Кэширующие функции для обхода дерева с защитой от циклов
     @lru_cache(maxsize=None)

@@ -7,6 +7,7 @@ from pathlib import Path
 from chardet import UniversalDetector
 from PIL import Image
 from typing import Literal
+from logger import logger
 
 from config import PATH_SAVES
 
@@ -36,13 +37,13 @@ def check_and_reencode_utf_sig(file: Path) -> None:
     u.close()
 
     if u.result["encoding"] == "UTF-8-SIG":
-        print(f"[WARN] Found UTF-8-SIG in {file} \nChange encoding to UTF-8 (removing BOM)")
+        logger.warning(f"Found UTF-8-SIG in {file} \nChange encoding to UTF-8 (removing BOM)")
         content_sig_file = file.read_text(encoding="UTF-8-SIG")
         new_file = file.with_suffix(".tmp")
 
         new_file.write_text(content_sig_file, encoding="UTF-8")
         new_file.replace(file)
-        print("Encoding changed successfully")
+        logger.info("Encoding changed successfully")
 
 
 def parse_state_delays(state_data: dict, direction: int = 0) -> tuple[list, int]:
@@ -131,7 +132,7 @@ def save_anim(
 
     output_filepath = OUTPUT_DIR / f"{name}.{format}"
     try:
-        print(f"[INFO] Saving {output_filepath}")
+        logger.info(f"Saving {output_filepath}")
         if format == "gif":
             resized_frames[0].save(
                 output_filepath,
@@ -157,14 +158,14 @@ def save_anim(
             )
         return output_filepath
     except Exception as e:
-        print(f"[ERROR] {e}")
+        logger.error({e})
 
 def process_composite_anim(item: dict, name_file: str, format: Literal["gif", "webp"] = "gif"):
     """Собирает многослойную анимацию (сборщик) с учетом выбранных направлений, кадров, смещений и цветов."""
     base_textures_path = SpriteLayerProcessor.get_base_textures_path(item)
     
     if not base_textures_path:
-        print("[WARN] Base textures path not found for composite animation.")
+        logger.warning("Base textures path not found for composite animation.")
         return
 
     native_w = item.get("size", {}).get("x", 32) or 32
@@ -221,7 +222,7 @@ def process_composite_anim(item: dict, name_file: str, format: Literal["gif", "w
         })
 
     if not layer_infos:
-        print(f"[WARN] No valid layers for composite animation {name_file}")
+        logger.warning(f"No valid layers for composite animation {name_file}")
         return
 
     if not primary_delays:
@@ -288,13 +289,13 @@ def process_composite_anim(item: dict, name_file: str, format: Literal["gif", "w
 
                     native_img.alpha_composite(layer_img, (final_x, final_y))
             except Exception as e:
-                print(f"[ERROR] Error processing layer in composite animation: {e}")
+                logger.error(f"Error processing layer in composite animation: {e}")
 
         frame_res = native_img.resize((target_width, target_height), Image.NEAREST)
         frames.append(frame_res)
 
     if not frames:
-        print(f"[WARN] No frames generated for {name_file}")
+        logger.warning(f"No frames generated for {name_file}")
         return
 
     copyright_data = item.get('copyright', '')
@@ -303,7 +304,7 @@ def process_composite_anim(item: dict, name_file: str, format: Literal["gif", "w
     durations_ms = [int(d * 1000) if d < 10 else int(d) for d in primary_delays[:len(frames)]]
 
     output_filepath = OUTPUT_DIR / f"{name_file}.{format}"
-    print(f"[INFO] Saving composite animation: {output_filepath}")
+    logger.info(f"Saving composite animation: {output_filepath}")
 
     try:
         if format == "gif":
@@ -320,7 +321,7 @@ def process_composite_anim(item: dict, name_file: str, format: Literal["gif", "w
             )
         return output_filepath
     except Exception as e:
-        print(f"[ERROR] {e}")
+        logger.error({e})
 
 
 def process_json_file(json_file: Path | str, target_state: str = None, name_file: str = "", format: Literal["gif", "webp"] = "gif", item: dict = None) -> None:
@@ -356,7 +357,7 @@ def process_json_file(json_file: Path | str, target_state: str = None, name_file
         spritesheet_file = json_file.parent / f"{state_name}.png"
 
         if not spritesheet_file.exists():
-            print(f"[WARN] File not found: {spritesheet_file}, skipping state {state_name}")
+            logger.warning(f"File not found: {spritesheet_file}, skipping state {state_name}")
             continue
 
         sprite_name = name_file or f"{json_file.parent.name}-{state_name}"
@@ -389,7 +390,7 @@ def main():
 
     for target_path in args.paths:
         if not target_path.exists():
-            print(f"[ERROR] Path does not exist: {target_path}")
+            logger.error(f"Path does not exist: {target_path}")
             continue
 
         if target_path.is_file() and target_path.suffix == ".json":
@@ -402,7 +403,7 @@ def main():
             if not meta_json.exists():
                 json_files = list(parent_dir.glob("*.json"))
                 if not json_files:
-                    print(f"[ERROR] No .json file found in {parent_dir} for {target_path.name}")
+                    logger.error(f"No .json file found in {parent_dir} for {target_path.name}")
                     continue
                 meta_json = json_files[0]
 

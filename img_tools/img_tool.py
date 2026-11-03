@@ -4,6 +4,7 @@ from pathlib import Path
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 from config import PATH_SAVES
+from logger import logger
 
 from .sprite_processor import SpriteLayerProcessor
 
@@ -65,7 +66,7 @@ def build_composite_image(item: dict, mode: str = "Original") -> Image.Image | N
         try:
             layer_img = Image.open(layer_file_path).convert("RGBA")
         except Exception as e:
-            print(f"[WARN] Failed to open layer image {layer_file_path}: {e}")
+            logger.warning(f"Failed to open layer image {layer_file_path}: {e}")
             continue
 
         fw, fh = layer_img.width, layer_img.height
@@ -131,7 +132,7 @@ def save_sprite(
     # Стандартный режим отрисовки одного спрайта
     if image is None:
         if not png_path.exists():
-            print(f"[ERROR] PNG file not found: {png_path}")
+            logger.error(f"PNG file not found: {png_path}")
             return None
 
         json_path = png_path.parent / "meta.json"
@@ -161,7 +162,7 @@ def save_sprite(
                         has_directions = True
 
             except Exception as e:
-                print(f"[WARN] Failed to read metadata from {json_path}: {e}")
+                logger.warning(f"Failed to read metadata from {json_path}: {e}")
 
         try:
             image = Image.open(png_path).convert("RGBA")
@@ -174,7 +175,7 @@ def save_sprite(
             elif mode == "West" and has_directions:
                 image = image.crop((tile_w, tile_h, tile_w * 2, tile_h * 2))
         except Exception as e:
-            print(f"[ERROR] Failed to open sprite {png_path}: {e}")
+            logger.error(f"Failed to open sprite {png_path}: {e}")
             return None
 
     if not output_name:
@@ -200,13 +201,13 @@ def save_sprite(
 
         resized_image = image.resize((new_width, new_height), Image.NEAREST)
 
-        print(f"[INFO] Saving {output_filepath}")
+        logger.info(f"Saving {output_filepath}")
         resized_image.save(output_filepath, format="PNG", pnginfo=metadata)
 
         return output_filepath
 
     except Exception as e:
-        print(f"[ERROR] Failed to save sprite {png_path}: {e}")
+        logger.error(f"Failed to save sprite {png_path}: {e}")
         return None
 
 
@@ -219,7 +220,7 @@ def process_path(target_path: Path | str, name_file: str = None, mode: str = "Or
         return
 
     if not target_path.exists():
-        print(f"[ERROR] Path does not exist: {target_path}")
+        logger.error(f"Path does not exist: {target_path}")
         return
 
     if target_path.is_file() and target_path.suffix.lower() == ".png":
@@ -269,7 +270,7 @@ def info_size_image(target_path: Path | str) -> None:
     target_path = Path(target_path)
 
     if not target_path.exists():
-        print(f"[ERROR] Path does not exist: {target_path}")
+        logger.error(f"Path does not exist: {target_path}")
         return
 
     with Image.open(target_path) as img:

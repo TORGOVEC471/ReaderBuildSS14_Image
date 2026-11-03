@@ -1,6 +1,7 @@
 import re
 from pathlib import Path
-from typing import Dict, Any, List, Set, Optional
+from typing import Dict, Any, Set, Optional
+from logger import logger
 
 def parse_ftl_file(file_path: Path) -> Dict[str, Dict[str, Any]]:
     """
@@ -125,7 +126,7 @@ def load_ftl_directory(directory_path: str) -> Dict[str, Dict[str, Any]]:
             file_data = parse_ftl_file(file_path)
             combined_raw_db.update(file_data)
         except Exception as e:
-            print(f"Ошибка чтения FTL файла {file_path}: {e}")
+            logger.error(f"Ошибка чтения FTL файла {file_path}: {e}")
 
     return resolve_ftl_references(combined_raw_db)
 

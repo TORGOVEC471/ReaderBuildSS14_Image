@@ -3,6 +3,7 @@ from pathlib import Path
 import parsers.yml_parser as YMLF
 import parsers.ftl_parser as FTLR
 from config import PATH_BUILD, DATA_FILE
+from logger import logger
 
 DIR_TEXTURES = 'Resources/Textures'
 DIR_PROTOTYPES = 'Resources/Prototypes'
@@ -30,7 +31,7 @@ def load_rsi_info(rsi_path: Path) -> tuple[dict, list[str], str | None]:
                     if states:
                         default_state = states[0]
         except Exception as e:
-            print(f"[WARN] Failed to read metadata from {meta_path}: {e}")
+            logger.warning(f"Failed to read metadata from {meta_path}: {e}")
 
     # Добавляем стейты из названий PNG-файлов, если они есть
     if rsi_path.is_dir():
@@ -67,7 +68,7 @@ def find_ftl_info(entity: dict, parsed_ftl: dict) -> tuple[str | None, str | Non
 
 
 def save_data_build(target_dir_yml: Path, target_dir_ftl: Path):
-    print(f"Начинаем запись в {DATA_FILE}")
+    logger.info(f"Начинаем запись в {DATA_FILE}")
     sprite_data_list = []
     parsed_data = YMLF.process_prototypes(target_dir_yml)
     parsed_ftl = FTLR.load_ftl_directory(target_dir_ftl)
@@ -119,7 +120,7 @@ def save_data_build(target_dir_yml: Path, target_dir_ftl: Path):
             default=lambda obj: str(obj) if isinstance(obj, Path) else obj
         )
     
-    print(f"Файлы успешно записаны в {DATA_FILE}")
+    logger.info(f"Файлы успешно записаны в {DATA_FILE}")
 
 
 # --- Пример использования ---

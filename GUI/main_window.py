@@ -12,6 +12,7 @@ from GUI.widgets import ClickableLabel
 from GUI.dialogs import ImageDetailDialog, SettingsDialog
 from GUI.compositor import SceneBuilderDialog
 from config import SETTINGS_FILE, icon_path
+from logger import logger
 
 # Главное окно
 class MainWindow(QMainWindow):
@@ -410,7 +411,7 @@ class MainWindow(QMainWindow):
         build = settings.value("Path_Build", "Не выбран", type=str)
         save = settings.value("Path_Saves", "Не выбран", type=str)
 
-        print(f"Build: {build} | Saves: {save}")
+        logger.info(f"Build: {build} | Saves: {save}")
 
     def open_scene_builder(self):
         dialog = SceneBuilderDialog(self.items, self)

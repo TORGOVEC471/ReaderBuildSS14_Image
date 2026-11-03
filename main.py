@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import (
 )
 import json
 from GUI.main_window import MainWindow
+from logger import logger
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
@@ -13,7 +14,7 @@ if __name__ == "__main__":
         with open("data.json", "r", encoding="utf-8") as file:
             items = json.load(file)
     except Exception as e:
-        print(f"[ERROR] {e}")
+        logger.error({e})
         QMessageBox.critical(
                             None,
                             "Ошибка",
@@ -24,8 +25,7 @@ if __name__ == "__main__":
             json.dump([], file, ensure_ascii=False, indent=4)
             items = []
 
-    # print(items)
-    print("Данные загружены с data.json!")
+    logger.info("Данные загружены с data.json!")
 
     # Сообщаем Windows, что это отдельное приложение со своим идентификатором модели
     if sys.platform == "win32":

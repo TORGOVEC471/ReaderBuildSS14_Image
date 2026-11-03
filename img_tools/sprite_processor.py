@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 from PIL import Image
+from logger import logger
 
 class SpriteLayerProcessor:
     @staticmethod
@@ -70,7 +71,7 @@ class SpriteLayerProcessor:
                             l_delays = raw_delays
                         f_count = len(l_delays)
             except Exception as e:
-                print(f"[WARNING] Не удалось прочитать {meta_path}: {e}")
+                logger.warning(f"Не удалось прочитать {meta_path}: {e}")
 
         # Автоопределение по размерам файла, если в meta.json нет данных
         if f_count == 1 and lfile.exists():

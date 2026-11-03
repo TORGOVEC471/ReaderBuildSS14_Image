@@ -16,6 +16,7 @@ from GUI.styles import (btn_style, group_style, btn_copy_style)
 from GUI.threads import SaveDataThread
 from config import SETTINGS_FILE, PATH_BUILD, icon_path
 import numpy as np
+from logger import logger
 
 from img_tools.sprite_processor import SpriteLayerProcessor
 
@@ -264,7 +265,7 @@ class ImageDetailDialog(QDialog):
                                 f_count = st.get("frameCount", 1)
                             break
             except Exception as e:
-                print(f"[WARNING] Не удалось прочитать {meta_path}: {e}")
+                logger.warning(f"Не удалось прочитать {meta_path}: {e}")
 
         if f_count == 1:
             layer_file_path = layer_dir / f"{st_name}.png"
@@ -300,7 +301,7 @@ class ImageDetailDialog(QDialog):
                         if st.get("name") == st_name:
                             return st.get("directions", 1)
             except Exception as e:
-                print(f"[WARNING] Не удалось прочитать направления из {meta_path}: {e}")
+                logger.warning(f"Не удалось прочитать направления из {meta_path}: {e}")
         return 1
 
     def show_layers_menu(self):
@@ -865,7 +866,7 @@ class SettingsDialog(QDialog):
 
     def confirm_action(self):
         if PATH_BUILD == Path("."):
-            print("[INFO] Отсутсвует путь билда!")
+            logger.info("Отсутсвует путь билда!")
             QMessageBox.information(
                 self,
                 "Уведомление",
