@@ -29,7 +29,7 @@ if __name__ == "__main__":
 
     # Сообщаем Windows, что это отдельное приложение со своим идентификатором модели
     if sys.platform == "win32":
-        myappid = "TorgovecNoComp.ReaderBuildSS14.v1.0.4"  # Произвольная уникальная строка
+        myappid = "TorgovecNoComp.ReaderBuildSS14.v1.0.5"  # Произвольная уникальная строка
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 
 
