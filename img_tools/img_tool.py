@@ -5,6 +5,8 @@ from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 from config import PATH_SAVES
 
+from .sprite_processor import SpriteLayerProcessor
+
 # Папка, куда сохраняются итоговые .png изображения
 OUTPUT_DIR = Path(PATH_SAVES).parent / "Saves/images"
 if not OUTPUT_DIR.exists():
@@ -44,27 +46,20 @@ def build_composite_image(item: dict, mode: str = "Original") -> Image.Image | N
     if not layers:
         return None
 
-    file_path = Path(item.get("file", ""))
-    resources_dir = next((p for p in file_path.parents if p.name == "Resources"), None)
-    base_textures_path = resources_dir / "Textures" if resources_dir else Path(item.get("path", ""))
+    base_textures_path = SpriteLayerProcessor.get_base_textures_path(item)
+    item_state = item.get("state", "default")
 
     canvas = Image.new("RGBA", (native_w, native_h), (0, 0, 0, 0))
 
     for layer in layers:
-        # Проверяем, включен ли слой (если явно указано enabled: False, пропускаем)
-        if not layer.get("enabled", True):
+        # Проверяем видимость слоя
+        if not layer.get("enabled", layer.get("visible", True)):
             continue
 
-        state_name = layer.get("state")
-        sprite_rel_path = layer.get("sprite")
+        ldir = base_textures_path / layer.get("sprite") if layer.get("sprite") else Path(item.get("path", ""))
+        layer_file_path, state_name = SpriteLayerProcessor.resolve_layer_file(item, layer, base_textures_path, item_state)
 
-        if sprite_rel_path and resources_dir:
-            layer_dir = base_textures_path / sprite_rel_path
-        else:
-            layer_dir = Path(item.get("path", ""))
-
-        layer_file_path = layer_dir / f"{state_name}.png" if state_name else layer_dir
-        if not layer_file_path.exists() or layer_file_path.is_dir():
+        if not layer_file_path or not layer_file_path.exists() or layer_file_path.is_dir():
             continue
 
         try:
@@ -73,64 +68,36 @@ def build_composite_image(item: dict, mode: str = "Original") -> Image.Image | N
             print(f"[WARN] Failed to open layer image {layer_file_path}: {e}")
             continue
 
-        # Проверка метаданных на наличие directions
-        json_path = layer_dir / "meta.json"
-        has_directions = False
-        if json_path.exists():
-            try:
-                with open(json_path, "r", encoding="utf-8-sig") as f:
-                    meta_data = json.load(f)
-                    dirs = meta_data.get("directions")
-                    states = meta_data.get("states", [])
-                    curr_s = next((s for s in states if s.get("name") == state_name), {})
-                    if curr_s.get("directions") is not None:
-                        dirs = curr_s.get("directions")
-                    if (isinstance(dirs, int) and dirs > 1) or (isinstance(dirs, (list, tuple)) and len(dirs) > 0):
-                        has_directions = True
-            except Exception:
-                pass
+        fw, fh = layer_img.width, layer_img.height
 
-        # Вырезание кадра (frame), если спрайт многокадровый
+        # Анализируем метаданные через общий класс
+        f_count, _, _, has_directions = SpriteLayerProcessor.parse_meta_and_frames(
+            layer_file_path, ldir, state_name, native_w, native_h
+        )
+
         frame_idx = layer.get("frame", 0)
-        if (layer_img.width > native_w or layer_img.height > native_h) and \
-           (layer_img.width % native_w == 0) and (layer_img.height % native_h == 0):
-            frame_w = native_w
-            frame_h = native_h
-            cols = layer_img.width // native_w
-            col = frame_idx % cols
-            row = frame_idx // cols
-            layer_img = layer_img.crop((col * frame_w, row * frame_h, (col + 1) * frame_w, (row + 1) * frame_h))
+        selected_dir = layer.get("direction", 0)
 
-        # Определение ракурса
-        if has_directions:
-            if mode == "South":
-                layer_img = layer_img.crop((0, 0, native_w, native_h))
-            elif mode == "North":
-                layer_img = layer_img.crop((native_w, 0, native_w * 2, native_h))
-            elif mode == "East":
-                layer_img = layer_img.crop((0, native_h, native_w, native_h * 2))
-            elif mode == "West":
-                layer_img = layer_img.crop((native_w, native_h, native_w * 2, native_h * 2))
+        # Вырезание кадра и направления (сетка)
+        if (fw > native_w or fh > native_h) and (fw % native_w == 0) and (fh % native_h == 0):
+            col, row = SpriteLayerProcessor.calculate_grid_coords(
+                fw, fh, native_w, native_h, selected_dir, frame_idx, f_count
+            )
+            layer_img = layer_img.crop((col * native_w, row * native_h, (col + 1) * native_w, (row + 1) * native_h))
 
-        # Перемножение цветов (tint)
+        # Определение ракурса по режиму (статическая сборка)
+        layer_img = SpriteLayerProcessor.apply_static_mode_crop(layer_img, mode, native_w, native_h, has_directions)
+
+        # Применение цвета (tint)
         if layer.get("color"):
             layer_img = apply_tint_to_image(layer_img, layer["color"])
 
-        # Центрирование и offset
-        layer_w, layer_h = layer_img.size
-        center_x = (native_w - layer_w) // 2
-        center_y = (native_h - layer_h) // 2
+        # Центрирование и смещение (offset)
+        lw, lh = layer_img.size
+        center_x = (native_w - lw) // 2
+        center_y = (native_h - lh) // 2
 
-        offset_x, offset_y = 0, 0
-        if "offset" in layer and layer["offset"]:
-            try:
-                parts = [float(p.strip()) for p in str(layer["offset"]).split(",")]
-                if len(parts) == 2:
-                    offset_x = int(round(parts[0] * native_w))
-                    offset_y = int(round(-parts[1] * native_h))
-            except ValueError:
-                pass
-
+        offset_x, offset_y = SpriteLayerProcessor.parse_offset(layer.get("offset"), native_w, native_h)
         final_x = center_x + offset_x
         final_y = center_y + offset_y
 

@@ -56,3 +56,18 @@ menu_bar_style = """
         background-color: #1abc9c;
     }
 """
+
+btn_copy_style = """
+    QPushButton {
+        border: 1px solid #d0d0d0;
+        border-radius: 4px;
+        background: #f5f5f5;
+        font-size: 14px;
+    }
+    QPushButton:hover {
+        background: #e5e5e5;
+    }
+    QPushButton:pressed {
+    background: #d5d5d5;
+    }
+"""
