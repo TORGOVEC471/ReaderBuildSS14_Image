@@ -10,21 +10,18 @@ def get_base_path():
         return Path(__file__).parent.resolve()
 
 def get_base_path_ico():
-    # Если приложение запущено как скомпилированный EXE
     if hasattr(sys, '_MEIPASS'):
         return Path(sys._MEIPASS)
-    # Если приложение запущено как обычный .py скрипт
     return Path(__file__).resolve().parent
-
 
 BASE_DIR = get_base_path()
 SETTINGS_FILE = BASE_DIR / "settings.ini"
 DATA_FILE = BASE_DIR / "data.json"
+LOCALE = "ru-RU"
 
-# Читаем или создаем конфиг
-config = configparser.ConfigParser()
-
+# Создаем конфигурационный файл по умолчанию, если его нет
 if not SETTINGS_FILE.exists():
+    config = configparser.ConfigParser()
     config["General"] = {
         "path_saves": ".",
         "path_build": "."
@@ -32,10 +29,25 @@ if not SETTINGS_FILE.exists():
     with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
         config.write(f)
 
-config.read(SETTINGS_FILE, encoding="utf-8")
+# Runtime-объект настроек: читает актуальные пути динамически
+class AppSettings:
+    @property
+    def path_build(self) -> Path:
+        config = configparser.ConfigParser()
+        if SETTINGS_FILE.exists():
+            config.read(SETTINGS_FILE, encoding="utf-8")
+            return Path(config.get("General", "path_build", fallback="."))
+        return Path(".")
 
-# Экспортируем готовые переменные, чтобы их можно было импортировать в любой файл
-PATH_BUILD = Path(config["General"]["path_build"])
-PATH_SAVES = Path(config["General"]["path_saves"])
+    @property
+    def path_saves(self) -> Path:
+        config = configparser.ConfigParser()
+        if SETTINGS_FILE.exists():
+            config.read(SETTINGS_FILE, encoding="utf-8")
+            return Path(config.get("General", "path_saves", fallback="."))
+        return Path(".")
+
+# Экспортируем экземпляр объекта настроек
+settings = AppSettings()
 
 icon_path = str(get_base_path_ico() / "assets/ReaderIcon.ico")

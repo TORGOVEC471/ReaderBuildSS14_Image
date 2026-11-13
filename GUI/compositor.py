@@ -337,45 +337,87 @@ class SceneBuilderDialog(QDialog):
         return sub_pixmap
 
     def render_scene(self):
-        native_w, native_h = 32, 32
-        canvas = QPixmap(native_w, native_h)
+        # Дефолтный размер, если слоев нет
+        max_w, max_h = 32, 32
+        
+        # Предварительный список для хранения распарсенных данных подслоев, 
+        # чтобы не загружать картинки заново во втором проходе
+        prepared_layers = []
+
+        # --- ПРОХОД 1: Поиск максимальных размеров холста ---
+        for layer_data in self.scene_layers:
+            if not layer_data["enabled"]:
+                continue
+
+            item = layer_data["item"]
+            current_state = layer_data["state"]
+            custom_color = layer_data["custom_color"]
+            frame_idx = layer_data["frame"]
+            item_path = Path(item.get("path", ""))
+
+            sub_layers = item.get("layers", [])
+            if not sub_layers:
+                sub_layers = [{"state": current_state, "color": custom_color, "sprite": "", "offset": [0, 0]}]
+
+            for sub_layer in sub_layers:
+                sub_state = sub_layer.get("state") or current_state
+                sub_sprite = sub_layer.get("sprite")
+                sub_color = custom_color if custom_color else sub_layer.get("color", "")
+                
+                sprite_filename = sub_sprite if sub_sprite else sub_state
+                sprite_path = item_path / f"{sprite_filename}.png"
+                
+                if not sprite_path.exists() and sub_state:
+                    sprite_path = item_path / f"{sub_state}.png"
+                if not sprite_path.exists():
+                    sprite_path = item_path / f"{current_state}.png"
+
+                # Используем дефолтные 32x32 только как шаг нарезки спрайт-листа (если это сетка 32x32)
+                # Если у вас разный размер исходных плиток, лучше передавать динамический native размер из конфига предмета.
+                # Здесь для примера сохранения совместимости передаем 32, 32:
+                sub_pixmap = self.get_cached_sub_pixmap(sprite_path, frame_idx, 32, 32, sub_color)
+                if sub_pixmap.isNull():
+                    continue
+
+                offset = sub_layer.get("offset", [0, 0])
+                ox = offset[0] if len(offset) > 0 else 0
+                oy = offset[1] if len(offset) > 1 else 0
+
+                prepared_layers.append({
+                    "pixmap": sub_pixmap,
+                    "ox": ox,
+                    "oy": oy
+                })
+
+                # Вычисляем габариты с учетом смещений (offset), чтобы холст не обрезал смещенные элементы
+                # Если элемент смещен вправо/вниз, общая ширина холста должна это учитывать
+                required_w = sub_pixmap.width() + abs(ox) * 2
+                required_h = sub_pixmap.height() + abs(oy) * 2
+
+                if required_w > max_w:
+                    max_w = required_w
+                if required_h > max_h:
+                    max_h = required_h
+
+        # --- ПРОХОД 2: Создание холста под максимальный размер и отрисовка ---
+        canvas = QPixmap(max_w, max_h)
         canvas.fill(Qt.GlobalColor.transparent)
 
         with QPainter(canvas) as painter:
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
 
-            for layer_data in self.scene_layers:
-                if not layer_data["enabled"]:
-                    continue
+            for pl in prepared_layers:
+                sub_pixmap = pl["pixmap"]
+                ox = pl["ox"]
+                oy = pl["oy"]
 
-                item = layer_data["item"]
-                state = layer_data["state"]
-                custom_color = layer_data["custom_color"]
-                frame_idx = layer_data["frame"]
-                item_path = Path(item.get("path", ""))
+                # Центрируем относительно нового динамического холста + добавляем offset
+                cx = (max_w - sub_pixmap.width()) // 2 + ox
+                cy = (max_h - sub_pixmap.height()) // 2 + oy
+                
+                painter.drawPixmap(cx, cy, sub_pixmap)
 
-                # Единая логика для элементов с подслоями и обычных объектов (DRY)
-                sub_layers = item.get("layers", [])
-                if not sub_layers:
-                    sub_layers = [{"state": state, "color": custom_color}]
-
-                for sub_layer in sub_layers:
-                    sub_json_state = sub_layer.get("state", "")
-                    sub_color = custom_color if custom_color else sub_layer.get("color", "")
-                    
-                    # Приоритет состояния
-                    sprite_path = item_path / f"{state}.png"
-                    if not sprite_path.exists() and sub_json_state:
-                        sprite_path = item_path / f"{sub_json_state}.png"
-
-                    sub_pixmap = self.get_cached_sub_pixmap(sprite_path, frame_idx, native_w, native_h, sub_color)
-                    if sub_pixmap.isNull():
-                        continue
-
-                    cx = (native_w - sub_pixmap.width()) // 2
-                    cy = (native_h - sub_pixmap.height()) // 2
-                    painter.drawPixmap(cx, cy, sub_pixmap)
-
+        # Масштабируем для отображения в QLabel (можно фиксировать размер превью или делать адаптивным)
         display_pixmap = canvas.scaled(
             256, 256,
             Qt.AspectRatioMode.KeepAspectRatio,

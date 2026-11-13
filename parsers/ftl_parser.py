@@ -12,7 +12,7 @@ def parse_ftl_file(file_path: Path) -> Dict[str, Dict[str, Any]]:
     current_id: Optional[str] = None
     current_attr: Optional[str] = None
 
-    with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+    with open(file_path, 'r', encoding='utf-8-sig', errors='replace') as f:
         for line in f:
             raw_line = line.rstrip('\r\n')
             stripped = raw_line.strip()

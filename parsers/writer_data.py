@@ -2,15 +2,16 @@ import json
 from pathlib import Path
 import parsers.yml_parser as YMLF
 import parsers.ftl_parser as FTLR
-from config import PATH_BUILD, DATA_FILE
+from config import DATA_FILE, settings, LOCALE
 from logger import logger
 
 DIR_TEXTURES = 'Resources/Textures'
 DIR_PROTOTYPES = 'Resources/Prototypes'
-DIR_FTL_RU = 'Resources/Locale/ru-RU'
+DIR_FTL_LOCALE = f'Resources/Locale/{LOCALE}'
+PATH_BUILD = settings.path_build
 
 TARGET_DIR_YML = PATH_BUILD / DIR_PROTOTYPES
-TARGET_DIR_FTL = PATH_BUILD / DIR_FTL_RU
+TARGET_DIR_FTL = PATH_BUILD / DIR_FTL_LOCALE
 
 
 def load_rsi_info(rsi_path: Path) -> tuple[dict, list[str], str | None]:
@@ -68,9 +69,12 @@ def find_ftl_info(entity: dict, parsed_ftl: dict) -> tuple[str | None, str | Non
 
 
 def save_data_build(target_dir_yml: Path, target_dir_ftl: Path):
-    logger.info(f"Начинаем запись в {DATA_FILE}")
+    logger.info(f"Начинаем запись в {DATA_FILE} для локали: {LOCALE}")
     sprite_data_list = []
     parsed_data = YMLF.process_prototypes(target_dir_yml)
+    
+    # Если папки локали нет (например, для en-US папка отсутствует), 
+    # FTLR.load_ftl_directory вернет пустой словарь без падений благодаря pathlib
     parsed_ftl = FTLR.load_ftl_directory(target_dir_ftl)
 
     for file_name, entities in parsed_data.items():
@@ -81,16 +85,9 @@ def save_data_build(target_dir_yml: Path, target_dir_ftl: Path):
             if not sprite:
                 continue
 
-            # Формируем путь к текстуре
             rsi_path = PATH_BUILD / DIR_TEXTURES / sprite.removeprefix("/Textures/")
-            
-            # Получаем всю информацию по RSI за один вызов
             size, states, default_state = load_rsi_info(rsi_path)
-            
-            # Если state не задан в сущности, берем дефолтный из RSI
             state_value = entity.get('state') or default_state
-
-            # Получаем локализацию
             name_ftl, desc_ftl, suffix_ftl = find_ftl_info(entity, parsed_ftl)
 
             sprite_data_list.append({
@@ -110,7 +107,6 @@ def save_data_build(target_dir_yml: Path, target_dir_ftl: Path):
                 "size": size
             })
 
-    # Сохранение результатов в JSON
     with open(DATA_FILE, "w", encoding="utf-8") as file:
         json.dump(
             sprite_data_list, 
@@ -123,6 +119,5 @@ def save_data_build(target_dir_yml: Path, target_dir_ftl: Path):
     logger.info(f"Файлы успешно записаны в {DATA_FILE}")
 
 
-# --- Пример использования ---
 if __name__ == "__main__":
     save_data_build(TARGET_DIR_YML, TARGET_DIR_FTL)

@@ -14,6 +14,11 @@ btn_style = """
     QPushButton:hover {
         background-color: #2980b9;
     }
+    QPushButton:disabled {
+        background-color: #3c3c3c; /* Темно-серый или светло-серый фон для неактивной */
+        color: #777777;            /* Приглушенный серый текст */
+        border: 1px solid #444444;
+    }
 """
 # Стиль для рамок (QGroupBox)
 group_style = """

@@ -1,7 +1,10 @@
 import json
 from pathlib import Path
 from PIL import Image
+from PIL.ImageQt import ImageQt
+from PyQt6.QtGui import QImage
 from logger import logger
+from .parse_color import parse_color
 
 class SpriteLayerProcessor:
     @staticmethod
@@ -107,6 +110,9 @@ class SpriteLayerProcessor:
         """Обрезает спрайт под конкретный ракурс (для статического режима image_tool)."""
         if not has_directions:
             return layer_img
+
+        if layer_img.width == native_w and layer_img.height == native_h:
+            return layer_img
             
         if mode == "South":
             return layer_img.crop((0, 0, native_w, native_h))
@@ -119,16 +125,146 @@ class SpriteLayerProcessor:
         return layer_img
 
     @staticmethod
-    def parse_offset(offset_val, native_w: int, native_h: int) -> tuple[int, int]:
-        """Парсит offset в пиксели."""
+    def parse_offset(offset_val) -> tuple[int, int]:
+        """Парсит offset в пиксели (в SS14 единицы смещения привязаны к тайлу 32x32)."""
         if not offset_val:
             return 0, 0
         try:
             parts = [float(p.strip()) for p in str(offset_val).split(",")]
             if len(parts) == 2:
-                offset_x = int(round(parts[0] * native_w))
-                offset_y = int(round(-parts[1] * native_h))
+                # Стандартный размер тайла в SS14 — 32 пикселя
+                base_tile_size = 32
+                offset_x = int(round(parts[0] * base_tile_size))
+                offset_y = int(round(-parts[1] * base_tile_size))
                 return offset_x, offset_y
         except ValueError:
             pass
         return 0, 0
+
+def pil_to_qimage(pil_img: Image.Image) -> QImage:
+    """Конвертирует PIL.Image в QImage для использования в PyQt."""
+    if pil_img.mode != "RGBA":
+        pil_img = pil_img.convert("RGBA")
+    # Используем стандартный ImageQt из библиотеки Pillow
+    return QImage(ImageQt(pil_img))
+
+def apply_tint_to_image(img: Image.Image, color_hex: str) -> Image.Image:
+    """Накладывает цвет (tint) путем умножения RGB и альфа каналов с сохранением объёма и текстуры."""
+    r_t, g_t, b_t, a_t = parse_color(color_hex)
+
+    r, g, b, a = img.split()
+    r = r.point(lambda i: int(i * r_t / 255))
+    g = g.point(lambda i: int(i * g_t / 255))
+    b = b.point(lambda i: int(i * b_t / 255))
+    
+    # Если в цвете задана прозрачность (#RRGGBBAA), умножаем её на исходную альфу
+    if a_t < 255:
+        a = a.point(lambda i: int(i * a_t / 255))
+        
+    return Image.merge("RGBA", (r, g, b, a))
+
+def render(item: dict, direction: int = 0, frame: int = 0, overrides: dict = None) -> Image.Image:
+    """
+    Единый рендерер слоев предмета. Возвращает PIL.Image в нативном разрешении.
+    """
+    if overrides is None:
+        overrides = {}
+
+    native_w = item.get("size", {}).get("x", 32) or 32
+    native_h = item.get("size", {}).get("y", 32) or 32
+
+    canvas = Image.new("RGBA", (native_w, native_h), (0, 0, 0, 0))
+
+    # Получаем конфиги слоев (из overrides или самого item)
+    layer_configs = overrides.get("layer_configs")
+    if layer_configs is None:
+        layers = item.get("layers", [])
+        if layers:
+            layer_configs = [{"enabled": True, "layer": l, "frame": frame, "direction": direction} for l in layers]
+        else:
+            state_val = item.get("state")
+            if state_val:
+                layer_configs = [{
+                    "enabled": True,
+                    "layer": {"state": state_val, "sprite": None},
+                    "frame": frame,
+                    "direction": direction
+                }]
+            else:
+                layer_configs = []
+
+    base_textures_path = SpriteLayerProcessor.get_base_textures_path(item)
+    item_state = item.get("state", "default")
+
+    if not base_textures_path:
+        return canvas
+
+    for config in layer_configs:
+        if not config.get("enabled", True):
+            continue
+
+        layer = config.get("layer", {})
+        if layer.get("visible") is False or layer.get("enabled") is False:
+            continue
+
+        # Позволяем переопределять направление и кадр точечно через конфиг или аргументы
+        layer_frame = config.get("frame", frame)
+        layer_dir = config.get("direction", direction)
+
+        state_name = layer.get("state")
+        sprite_rel_path = layer.get("sprite")
+        
+        # Разрешаем путь через штатный резолвер
+        layer_file_path, resolved_state = SpriteLayerProcessor.resolve_layer_file(
+            item, layer, base_textures_path, item_state
+        )
+        if resolved_state:
+            state_name = resolved_state
+
+        if not layer_file_path or not layer_file_path.exists() or layer_file_path.is_dir():
+            continue
+
+        try:
+            with Image.open(layer_file_path) as full_img:
+                layer_img = full_img.convert("RGBA")
+        except Exception as e:
+            continue
+
+        fw, fh = layer_img.width, layer_img.height
+
+        # Анализ метаданных и кадров
+        f_count, directions_count, _, _ = SpriteLayerProcessor.parse_meta_and_frames(
+            layer_file_path, layer_file_path.parent, state_name, native_w, native_h
+        )
+
+        if f_count > 1:
+            layer_frame = layer_frame % f_count
+        if directions_count > 1:
+            layer_dir = layer_dir % directions_count
+
+        # Вырезание кадра / направления из спрайт-листа (сетки)
+        if (fw > native_w or fh > native_h) and (fw % native_w == 0) and (fh % native_h == 0):
+            col, row = SpriteLayerProcessor.calculate_grid_coords(
+                fw, fh, native_w, native_h, layer_dir, layer_frame, f_count
+            )
+            layer_img = layer_img.crop((col * native_w, row * native_h, (col + 1) * native_w, (row + 1) * native_h))
+
+        # Применение цвета (tint)
+        color_hex = layer.get("color") or overrides.get("color")
+        if color_hex:
+            layer_img = apply_tint_to_image(layer_img, color_hex)
+
+        # Центрирование и смещение (offset)
+        lw, lh = layer_img.size
+        center_x = (native_w - lw) // 2
+        center_y = (native_h - lh) // 2
+
+        offset_x, offset_y = SpriteLayerProcessor.parse_offset(layer.get("offset"))
+        final_x = center_x + offset_x
+        final_y = center_y + offset_y
+
+        temp_canvas = Image.new("RGBA", (native_w, native_h), (0, 0, 0, 0))
+        temp_canvas.paste(layer_img, (final_x, final_y))
+        canvas = Image.alpha_composite(canvas, temp_canvas)
+
+    return canvas

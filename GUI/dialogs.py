@@ -4,35 +4,33 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QLineEdit, QDialog,
     QGroupBox, QDialogButtonBox, QFileDialog, QMessageBox,
     QMenu, QCheckBox, QWidgetAction, QSpinBox,
-    QComboBox
+    QComboBox, QProgressBar
 )
 from PyQt6.QtGui import QPixmap, QColor, QFont, QDesktopServices, QPainter, QIcon
-from PyQt6.QtCore import Qt, QUrl, QSettings, QPoint, QTimer
+from PyQt6.QtCore import Qt, QUrl, QSettings, QPoint, QTimer, pyqtSignal
 import json
 import img_tools.gif_tool as ToGIF
 import img_tools.img_tool as ToIMAGE
 from pathlib import Path
 from GUI.styles import (btn_style, group_style, btn_copy_style)
 from GUI.threads import SaveDataThread
-from config import SETTINGS_FILE, PATH_BUILD, icon_path
-import numpy as np
+from config import SETTINGS_FILE, icon_path, settings
+import copy
 from logger import logger
 
-from img_tools.sprite_processor import SpriteLayerProcessor
+from img_tools.sprite_processor import render, pil_to_qimage
+from img_tools.parse_color import parse_color
 
 # Модальное окно с увеличенной картинкой и кнопками
 class ImageDetailDialog(QDialog):
     def __init__(self, item: dict, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self.item = item
+        self.is_loading = False  # Флаг процесса загрузки
+        self.item = copy.deepcopy(item)
         self.setWindowTitle(f"Просмотр: {item.get('id', 'Элемент')}")
         self.setMinimumSize(420, 520)
         
-        # Предварительно вычисляем базовые пути
-        self.base_textures_path = self._resolve_base_textures_path()
-        self.current_sprite_path = ""
-
         # Предварительно вычисляем базовые пути
         self.base_textures_path = self._resolve_base_textures_path()
         self.current_sprite_path = ""
@@ -72,7 +70,7 @@ class ImageDetailDialog(QDialog):
         top_layout = QHBoxLayout()
 
         self.btn_state = QPushButton()
-        self.btn_state.setStyleSheet(btn_style if 'btn_style' in globals() else "")
+        self.btn_state.setStyleSheet(btn_style)
         
         states = self.item.get("states", [self.item.get("state", "default")])
         state_menu = QMenu(self)
@@ -89,8 +87,8 @@ class ImageDetailDialog(QDialog):
 
         # Кнопка настройки слоев
         self.btn_layers = QPushButton("⚙ Слои")
-        self.btn_layers.setStyleSheet(btn_style if 'btn_style' in globals() else "")
-        self.btn_layers.setVisible(False)
+        self.btn_layers.setStyleSheet(btn_style)
+        # self.btn_layers.setVisible(False)
         self.btn_layers.clicked.connect(self.show_layers_menu)
         top_layout.addWidget(self.btn_layers)
 
@@ -155,13 +153,13 @@ class ImageDetailDialog(QDialog):
 
         # Группа ссылки
         group_links = QGroupBox("Ссылки")
-        group_links.setStyleSheet(group_style if 'group_style' in globals() else "")
+        group_links.setStyleSheet(group_style)
         group_links_layout = QHBoxLayout()
 
         btn_yml = QPushButton("YML")
         btn_rsi = QPushButton("RSI")
-        btn_yml.setStyleSheet(btn_style if 'btn_style' in globals() else "")
-        btn_rsi.setStyleSheet(btn_style if 'btn_style' in globals() else "")
+        btn_yml.setStyleSheet(btn_style)
+        btn_rsi.setStyleSheet(btn_style)
 
         group_links_layout.addWidget(btn_yml)
         group_links_layout.addWidget(btn_rsi)
@@ -169,33 +167,40 @@ class ImageDetailDialog(QDialog):
 
         # Группа кнопок экспорта
         group_btns = QGroupBox("Кнопки")
-        group_btns.setStyleSheet(group_style if 'group_style' in globals() else "")
+        group_btns.setStyleSheet(group_style)
         group_btns_layout = QHBoxLayout()
 
         btn_img = QPushButton("IMG")
         btn_gif = QPushButton("GIF")
         btn_webp = QPushButton("WebP")
-        btn_img.setStyleSheet(btn_style if 'btn_style' in globals() else "")
-        btn_gif.setStyleSheet(btn_style if 'btn_style' in globals() else "")
-        btn_webp.setStyleSheet(btn_style if 'btn_style' in globals() else "")
+        # btn_apng = QPushButton("APNG") # APNG работает, но я незнаю зачем он нам. Пока-что будет закомментирован
+        btn_img.setStyleSheet(btn_style)
+        btn_gif.setStyleSheet(btn_style)
+        btn_webp.setStyleSheet(btn_style)
+        # btn_apng.setStyleSheet(btn_style)
 
         img_menu = QMenu(self)
         img_menu.addAction("1. Original", lambda: self.process_image_with_mode("Original"))
         img_menu.addAction("2. Resize", lambda: self.process_image_with_mode("Resize"))
-        img_menu.addAction("3.1 South (лицо)", lambda: self.process_image_with_mode("South"))
-        img_menu.addAction("3.2 North (зад)", lambda: self.process_image_with_mode("North"))
-        img_menu.addAction("3.3 East (правый профиль)", lambda: self.process_image_with_mode("East"))
-        img_menu.addAction("3.4 West (левый профиль)", lambda: self.process_image_with_mode("West"))
+
+        # Ссылки на направления
+        self.action_south = img_menu.addAction("3.1 South (лицо)", lambda: self.process_image_with_mode("South"))
+        self.action_north = img_menu.addAction("3.2 North (зад)", lambda: self.process_image_with_mode("North"))
+        self.action_east = img_menu.addAction("3.3 East (правый профиль)", lambda: self.process_image_with_mode("East"))
+        self.action_west = img_menu.addAction("3.4 West (левый профиль)", lambda: self.process_image_with_mode("West"))
+        
         btn_img.setMenu(img_menu)
 
         btn_yml.clicked.connect(self.on_yml_clicked)
         btn_rsi.clicked.connect(self.on_rsi_clicked)
         btn_gif.clicked.connect(self.on_gif_clicked)
         btn_webp.clicked.connect(self.on_webp_clicked)
+        # btn_apng.clicked.connect(self.on_apng_clicked)
 
         group_btns_layout.addWidget(btn_img)
         group_btns_layout.addWidget(btn_gif)
         group_btns_layout.addWidget(btn_webp)
+        # group_btns_layout.addWidget(btn_apng)
         group_btns.setLayout(group_btns_layout)
 
         # Главный слой кнопок
@@ -222,7 +227,16 @@ class ImageDetailDialog(QDialog):
 
     def on_builder_toggled(self, checked: bool):
         """Поведение при включении/выключении режима Сборщик."""
-        self.btn_layers.setVisible(checked)
+        # self.btn_layers.setVisible(checked)
+        self.btn_layers.setEnabled(checked)
+
+        hide_actions = checked
+        if hasattr(self, 'action_south'):
+            self.action_south.setVisible(not hide_actions)
+            self.action_north.setVisible(not hide_actions)
+            self.action_east.setVisible(not hide_actions)
+            self.action_west.setVisible(not hide_actions)
+
         self.change_state(self.item.get("state", ""))
 
     def _resolve_base_textures_path(self) -> Path | None:
@@ -246,7 +260,7 @@ class ImageDetailDialog(QDialog):
         
         if meta_path.exists():
             try:
-                with open(meta_path, "r", encoding="utf-8") as f:
+                with open(meta_path, "r", encoding="utf-8-sig") as f:
                     meta_data = json.load(f)
                     for st in meta_data.get("states", []):
                         if st.get("name") == st_name:
@@ -295,7 +309,7 @@ class ImageDetailDialog(QDialog):
         meta_path = layer_dir / "meta.json"
         if meta_path.exists():
             try:
-                with open(meta_path, "r", encoding="utf-8") as f:
+                with open(meta_path, "r", encoding="utf-8-sig") as f:
                     meta_data = json.load(f)
                     for st in meta_data.get("states", []):
                         if st.get("name") == st_name:
@@ -330,7 +344,7 @@ class ImageDetailDialog(QDialog):
         global_dir_layout.addWidget(global_dir_combo)
         
         btn_apply_all = QPushButton("Применить")
-        btn_apply_all.setStyleSheet(btn_style if 'btn_style' in globals() else "")
+        btn_apply_all.setStyleSheet(btn_style)
         btn_apply_all.clicked.connect(lambda: [
             menu.close(),
             self.apply_direction_to_all_layers(global_dir_combo.currentIndex())
@@ -391,7 +405,7 @@ class ImageDetailDialog(QDialog):
                 btn_del = QPushButton("❌")
                 btn_del.setFixedSize(24, 24)
                 btn_del.setToolTip("Удалить слой")
-                btn_del.setStyleSheet(btn_copy_style if 'btn_copy_style' in globals() else "")
+                btn_del.setStyleSheet(btn_copy_style)
                 btn_del.clicked.connect(lambda _, idx=i: self.delete_layer(idx, menu))
                 h_layout.addWidget(btn_del)
 
@@ -411,7 +425,7 @@ class ImageDetailDialog(QDialog):
         add_layout.addWidget(combo_states)
 
         btn_add = QPushButton("➕ Добавить слой")
-        btn_add.setStyleSheet(btn_style if 'btn_style' in globals() else "")
+        btn_add.setStyleSheet(btn_style)
         btn_add.clicked.connect(lambda: [
             menu.close(), 
             self.add_layer(combo_states.currentText())
@@ -513,7 +527,10 @@ class ImageDetailDialog(QDialog):
         painter.drawPixmap(0, 0, pixmap)
         
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Multiply)
-        painter.fillRect(result.rect(), QColor(color_hex))
+        
+        # Получаем честные RGBA компоненты из любого формата цвета
+        r, g, b, a = parse_color(color_hex)
+        painter.fillRect(result.rect(), QColor(r, g, b, a))
         
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
         painter.drawPixmap(0, 0, pixmap)
@@ -541,84 +558,15 @@ class ImageDetailDialog(QDialog):
         return pixmap, width, height
 
     def render_composite_image(self) -> QPixmap:
-        native_w = self.item.get("size", {}).get("x", 32) or 32
-        native_h = self.item.get("size", {}).get("y", 32) or 32
-
-        native_pixmap = QPixmap(native_w, native_h)
-        native_pixmap.fill(Qt.GlobalColor.transparent)
-
-        item_state = self.item.get("state", "default")
-
-        base_textures_path = SpriteLayerProcessor.get_base_textures_path(self.item)
-
-        if not base_textures_path:
-            return native_pixmap.scaled(
-                256, 256, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation
-            )
-
-        with QPainter(native_pixmap) as painter:
-            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
-
-            for config in self.layer_configs:
-                if not config.get("enabled", True):
-                    continue
-
-                layer = config["layer"]
-                ldir = base_textures_path / layer.get("sprite") if layer.get("sprite") else Path(self.item.get("path", ""))
-                layer_file_path, state_name = SpriteLayerProcessor.resolve_layer_file(
-                    self.item, layer, base_textures_path, item_state
-                )
-
-                if not layer_file_path or not layer_file_path.exists() or layer_file_path.is_dir():
-                    continue
-
-                full_pixmap = QPixmap(str(layer_file_path))
-                if full_pixmap.isNull():
-                    continue
-
-                # Получаем количество кадров и направлений через наш класс-помощник
-                f_count, directions_count, _, _ = SpriteLayerProcessor.parse_meta_and_frames(
-                    layer_file_path, ldir, state_name, native_w, native_h
-                )
-
-                frame_idx = config.get("frame", 0)
-                if f_count > 1:
-                    frame_idx = frame_idx % f_count
-
-                dir_idx = config.get("direction", 0)
-                if directions_count > 1:
-                    dir_idx = dir_idx % directions_count
-
-                fw = full_pixmap.width()
-                fh = full_pixmap.height()
-
-                # Проверяем, является ли текстура спрайт-листом (сеткой)
-                if (fw > native_w or fh > native_h) and (fw % native_w == 0) and (fh % native_h == 0):
-                    col, row = SpriteLayerProcessor.calculate_grid_coords(
-                        fw, fh, native_w, native_h, dir_idx, frame_idx, f_count
-                    )
-                    layer_pixmap = full_pixmap.copy(col * native_w, row * native_h, native_w, native_h)
-                else:
-                    layer_pixmap = full_pixmap
-
-                # Применение цвета (tint) если метод определен в классе диалога
-                if "color" in layer and layer["color"] and hasattr(self, "apply_layer_color"):
-                    layer_pixmap = self.apply_layer_color(layer_pixmap, layer["color"])
-
-                lw = layer_pixmap.width()
-                lh = layer_pixmap.height()
-
-                center_x = (native_w - lw) // 2
-                center_y = (native_h - lh) // 2
-
-                offset_x, offset_y = SpriteLayerProcessor.parse_offset(layer.get("offset"), native_w, native_h)
-                final_x = center_x + offset_x
-                final_y = center_y + offset_y
-
-                painter.drawPixmap(final_x, final_y, layer_pixmap)
-
+        target_item = getattr(self, 'item', {})
+        overrides = {"layer_configs": getattr(self, 'layer_configs', None)}
+        
+        pil_img = render(target_item, overrides=overrides)
+        qimg = pil_to_qimage(pil_img)
+        pixmap = QPixmap.fromImage(qimg)
+        
         display_size = 256
-        return native_pixmap.scaled(
+        return pixmap.scaled(
             display_size, display_size,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.FastTransformation
@@ -702,6 +650,22 @@ class ImageDetailDialog(QDialog):
 
         ToGIF.process_json_file(json_path, state_name, file_name, format="webp", item=item_data)
 
+    def on_apng_clicked(self):
+        json_path = Path(self.item.get("path", "")) / "meta.json"
+        state_name = self.item.get("state", "")
+        file_name = self.item.get("id", "")
+        
+        item_data = None
+        if self.cb_builder.isChecked():
+            for i, config in enumerate(self.layer_configs):
+                if i < len(self.item.get("layers", [])):
+                    self.item["layers"][i]["enabled"] = config["enabled"]
+                    self.item["layers"][i]["frame"] = config["frame"]
+                    self.item["layers"][i]["direction"] = config.get("direction", 0)
+            item_data = self.item
+
+        ToGIF.process_json_file(json_path, state_name, file_name, format="apng", item=item_data)
+
     def process_image_with_mode(self, mode: str):
         image_path = Path(f"{self.item.get('path', '')}/{self.item.get('state', '')}.png")
         image_name = f"{self.item.get('id', '')}-{self.item.get('state', '')}"
@@ -721,13 +685,15 @@ class ImageDetailDialog(QDialog):
 
 # Класс окна настроек
 class SettingsDialog(QDialog):
+    # Сигнал для уведомления главного окна об успешной пересборке данных
+    data_reloaded = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose) # Уничтожит объект при закрытии окна
 
         self.setWindowTitle("Настройки")
-        self.setFixedSize(800, 600)
-
+        self.setFixedSize(800, 650) # Немного увеличили высоту под прогресс-бар
         self.setWindowIcon(QIcon(icon_path))
 
         # Компоновка элементов
@@ -825,6 +791,12 @@ class SettingsDialog(QDialog):
 
         main_layout.addWidget(group_reloads)
 
+        # Добавляем прогресс-бар (по умолчанию скрыт)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 0) # Анимация "бегущей строки" ожидания
+        self.progress_bar.setVisible(False)
+        main_layout.addWidget(self.progress_bar)
+
         # ----------------------------------------------------
         # 3. Кнопки сохранения / отмены
         # ----------------------------------------------------
@@ -865,12 +837,13 @@ class SettingsDialog(QDialog):
         self.settings.setValue("path_saves", self.path_save_input.text())
 
     def confirm_action(self):
-        if PATH_BUILD == Path("."):
-            logger.info("Отсутсвует путь билда!")
+        # Используем runtime-объект настроек
+        if settings.path_build == Path("."):
+            logger.info("Отсутствует путь билда!")
             QMessageBox.information(
                 self,
                 "Уведомление",
-                "Отсутствует путь билда.\nУкажите путь в наcтройках, чтобы программа могла получить данные!"
+                "Отсутствует путь билда.\nУкажите путь в настройках, чтобы программа могла получить данные!"
             )
             return
 
@@ -883,32 +856,60 @@ class SettingsDialog(QDialog):
         )
 
         if reply == QMessageBox.StandardButton.Yes:
-            # меняем текст и блокируем кнопку
-            self.btn_reload.setText("🔄ЗАГРУЖАЕТСЯ🔄")
+            self.is_loading = True
+            self.btn_reload.setText("🔄 ЗАГРУЖАЕТСЯ 🔄")
             self.btn_reload.setEnabled(False)
+            
+            # Показываем прогресс-бар и блокируем интерфейс
+            self.progress_bar.setVisible(True)
+            self.set_ui_locked(True)
 
-            # принудительно обновляем интерфейс
             QApplication.processEvents()
 
-            # Запускаем фоновый поток
             try:
                 self.save_thread = SaveDataThread()
                 self.save_thread.finished_signal.connect(self.on_save_finished)
                 self.save_thread.finished.connect(self.save_thread.deleteLater)
                 self.save_thread.start()
             except Exception as e:
-                QMessageBox.information(
-                    self,
-                    "Error!",
-                    f"{e}"
-                )
+                self.is_loading = False
+                self.progress_bar.setVisible(False)
+                self.set_ui_locked(False)
+                logger.error(f"Не удалось запустить SaveDataThread: {e}")
+                QMessageBox.critical(self, "Error!", f"{e}")
 
     def on_save_finished(self):
-        # Этот метод вызовется автоматически, когда поток закончит работу
+        self.is_loading = False
+        self.progress_bar.setVisible(False)
+        self.set_ui_locked(False)
+        self.btn_reload.setText("ПЕРЕЗАГРУЗИТЬ")
+        self.btn_reload.setEnabled(True)
+
+        # Больше не просим перезапускать приложение!
         QMessageBox.information(
             self, 
             "Готово!", 
-            "Перезагрузка завершена.\nПерезагрузите программу чтобы применить изменения!"
+            "Перезагрузка данных успешно завершена!"
         )
-        self.btn_reload.setText("ПЕРЕЗАГРУЗИТЬ")
-        self.btn_reload.setEnabled(True)
+        
+        # Сигнализируем главному окну обновить сетку элементов
+        self.data_reloaded.emit()
+
+    def set_ui_locked(self, locked):
+        """Блокирует/разблокирует интерфейс на время загрузки"""
+        # Находим button_box и отключаем/включаем кнопкy закрытия/отмены
+        button_box = self.findChild(QDialogButtonBox)
+        if button_box:
+            button_box.setEnabled(not locked)
+
+    def closeEvent(self, event):
+        """Защита от закрытия окна во время работы потока"""
+        if self.is_loading:
+            QMessageBox.warning(
+                self,
+                "Внимание",
+                "Идет процесс перезагрузки данных!\nПожалуйста, дождитесь окончания процесса."
+            )
+            event.ignore()  # Запрещаем закрывать окно
+        else:
+            event.accept()

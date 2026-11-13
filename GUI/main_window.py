@@ -2,17 +2,18 @@ import os
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QScrollArea, QGridLayout,
     QVBoxLayout, QHBoxLayout, QLabel, QFrame,
-    QPushButton, QLineEdit, QDialog,
+    QPushButton, QLineEdit, QMessageBox
 )
 from PyQt6.QtGui import QPixmap, QColor, QFont, QPainter, QIcon
 from PyQt6.QtCore import Qt, QSettings, QTimer
-from pathlib import Path
 from GUI.styles import (COLUMNS, PAGE_SIZE, menu_bar_style)
 from GUI.widgets import ClickableLabel
 from GUI.dialogs import ImageDetailDialog, SettingsDialog
 from GUI.compositor import SceneBuilderDialog
 from config import SETTINGS_FILE, icon_path
 from logger import logger
+import json
+from img_tools.sprite_processor import render, pil_to_qimage
 
 # Главное окно
 class MainWindow(QMainWindow):
@@ -123,14 +124,52 @@ class MainWindow(QMainWindow):
         if not query:
             self.filtered_items = self.items
         else:
-            self.filtered_items = [
-                item for item in self.items
-                if query in str(item.get("id", "")).lower()
-                or query in str(item.get("name_ftl", "")).lower()
-                or query in os.path.basename(item.get("path", "")).lower()
-                or query.lower() in [x.lower() for x in item.get("suffix", [])]
-                or any(query.lower() in x.lower() for x in (item.get("suffix_ftl") or []) if isinstance(x, str))
-            ]
+            filtered = []
+            for item in self.items:
+                if not isinstance(item, dict):
+                    continue
+                
+                # 1. Проверка ID
+                item_id = str(item.get("id", ""))
+                if query in item_id.lower():
+                    filtered.append(item)
+                    continue
+
+                # 2. Проверка name_ftl
+                name_ftl = str(item.get("name_ftl", ""))
+                if query in name_ftl.lower():
+                    filtered.append(item)
+                    continue
+
+                # 3. Проверка path
+                path = str(item.get("path", ""))
+                if query in os.path.basename(path).lower():
+                    filtered.append(item)
+                    continue
+
+                # 4. Безопасная проверка suffix (может быть списком, строкой или чем угодно)
+                suffix_data = item.get("suffix", [])
+                if isinstance(suffix_data, list):
+                    if any(isinstance(x, str) and query in x.lower() for x in suffix_data):
+                        filtered.append(item)
+                        continue
+                elif isinstance(suffix_data, str):
+                    if query in suffix_data.lower():
+                        filtered.append(item)
+                        continue
+
+                # 5. Безопасная проверка suffix_ftl
+                suffix_ftl_data = item.get("suffix_ftl", [])
+                if isinstance(suffix_ftl_data, list):
+                    if any(isinstance(x, str) and query in x.lower() for x in suffix_ftl_data):
+                        filtered.append(item)
+                        continue
+                elif isinstance(suffix_ftl_data, str):
+                    if query in suffix_ftl_data.lower():
+                        filtered.append(item)
+                        continue
+
+            self.filtered_items = filtered
 
         self.reset_and_render()
 
@@ -155,117 +194,27 @@ class MainWindow(QMainWindow):
             painter.end()
             return result
 
-    def render_color_image(self, item: dict = None, layer_configs: list = None, display_size: int = None) -> QPixmap:
-        """Собирает включенные слои на базовом холсте с учетом видимости, кадров и offset."""
+    def render_color_image(self, item: dict = None, layer_configs: list = None, display_size: int = None, direction: int = 0, frame: int = 0) -> QPixmap:
         target_item = item if item is not None else getattr(self, 'item', {})
+        overrides = {"layer_configs": layer_configs} if layer_configs else {}
         
-        native_w = target_item.get("size", {}).get("x", 32) or 32
-        native_h = target_item.get("size", {}).get("y", 32) or 32
+        # Получаем результат через единый PIL-рендерер
+        pil_img = render(target_item, direction=direction, frame=frame, overrides=overrides)
+        
+        # Сохраняем флаг наличия контента (проверка альфа-канала)
+        self._last_render_has_content = any(pil_img.getextrema()[3])
 
-        native_pixmap = QPixmap(native_w, native_h)
-        native_pixmap.fill(Qt.GlobalColor.transparent)
-
-        # Флаг для отслеживания успешной отрисовки хотя бы одного слоя
-        has_drawn_content = False
-
-        # Если конфиги слоев не переданы явно, берем их из словаря item["layers"]
-        if layer_configs is None:
-            layers = target_item.get("layers", [])
-            if layers:
-                layer_configs = [{"enabled": True, "layer": l, "frame": 0} for l in layers]
-            else:
-                # Если слоев нет, но есть дефолтный state и path
-                state_val = target_item.get("state")
-                if state_val:
-                    layer_configs = [{
-                        "enabled": True,
-                        "layer": {"state": state_val, "sprite": None},
-                        "frame": 0
-                    }]
-                else:
-                    layer_configs = []
-
-        with QPainter(native_pixmap) as painter:
-            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
-
-            file_path = Path(target_item.get("file", ""))
-            resources_dir = next((p for p in file_path.parents if p.name == "Resources"), None)
-            base_textures_path = resources_dir / "Textures" if resources_dir else None
-
-            if base_textures_path:
-                for config in layer_configs:
-                    if not config.get("enabled", True):
-                        continue
-
-                    layer = config["layer"]
-                    state_name = layer.get("state")
-                    sprite_rel_path = layer.get("sprite")
-
-                    if sprite_rel_path:
-                        layer_dir = base_textures_path / sprite_rel_path
-                    else:
-                        layer_dir = Path(target_item.get("path", ""))
-
-                    layer_file_path = layer_dir / f"{state_name}.png" if state_name else layer_dir
-
-                    if not layer_file_path.exists() or layer_file_path.is_dir():
-                        continue
-
-                    full_pixmap = QPixmap(str(layer_file_path))
-                    if full_pixmap.isNull():
-                        continue
-
-                    # Если спрайт содержит несколько кадров (сетка или строка), вырезаем нужный кадр
-                    frame_idx = config.get("frame", 0)
-                    if (full_pixmap.width() > native_w or full_pixmap.height() > native_h) and \
-                       (full_pixmap.width() % native_w == 0) and (full_pixmap.height() % native_h == 0):
-                        
-                        frame_w = native_w
-                        frame_h = native_h
-                        cols = full_pixmap.width() // native_w
-                        col = frame_idx % cols
-                        row = frame_idx // cols
-                        
-                        layer_pixmap = full_pixmap.copy(col * frame_w, row * frame_h, frame_w, frame_h)
-                    else:
-                        layer_pixmap = full_pixmap
-
-                    # Применение цвета (tint) из слоя
-                    if "color" in layer and layer["color"]:
-                        layer_pixmap = self.apply_layer_color(layer_pixmap, layer["color"])
-
-                    layer_w = layer_pixmap.width()
-                    layer_h = layer_pixmap.height()
-
-                    center_x = (native_w - layer_w) // 2
-                    center_y = (native_h - layer_h) // 2
-
-                    offset_x, offset_y = 0, 0
-                    if "offset" in layer and layer["offset"]:
-                        try:
-                            parts = [float(p.strip()) for p in str(layer["offset"]).split(",")]
-                            if len(parts) == 2:
-                                offset_x = int(round(parts[0] * native_w))
-                                offset_y = int(round(-parts[1] * native_h))
-                        except ValueError:
-                            pass
-
-                    final_x = center_x + offset_x
-                    final_y = center_y + offset_y
-
-                    painter.drawPixmap(final_x, final_y, layer_pixmap)
-                    has_drawn_content = True # помечаем, что что-то нарисовали
-
-        # Сохраняем флаг в экземпляр класса для использования в create_card
-        self._last_render_has_content = has_drawn_content
+        # Конвертируем в QPixmap для отображения
+        qimg = pil_to_qimage(pil_img)
+        pixmap = QPixmap.fromImage(qimg)
 
         if display_size:
-            return native_pixmap.scaled(
+            return pixmap.scaled(
                 display_size, display_size,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.FastTransformation
             )
-        return native_pixmap
+        return pixmap
 
 
     def create_card(self, item: dict) -> QFrame:
@@ -400,10 +349,29 @@ class MainWindow(QMainWindow):
         return menu_bar
 
     def on_settings_clicked(self):
-        dialog = SettingsDialog()
+        dialog = SettingsDialog(self)
+        # Подключаем сигнал успешной перезагрузки данных из окна настроек
+        dialog.data_reloaded.connect(self.reload_items_and_grid)
+        dialog.exec()
 
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.load_app_settings()
+    def reload_items_and_grid(self):
+        """Перечитывает data.json и обновляет сетку карточек без перезапуска приложения"""
+        file_path = "data.json"
+        try:
+            if os.path.exists(file_path):
+                with open(file_path, "r", encoding="utf-8") as file:
+                    self.items = json.load(file)
+                logger.info("Данные в MainWindow успешно обновлены из data.json!")
+                
+                # Сбрасываем фильтры/поиск и перерисовываем сетку заново
+                self.filtered_items = self.items
+                if hasattr(self, 'search_input') and self.search_input.text():
+                    self._execute_filter()
+                else:
+                    self.reset_and_render()
+        except Exception as e:
+            logger.error(f"Не удалось обновить данные в MainWindow: {e}")
+            QMessageBox.critical(self, "Ошибка", f"Не удалось обновить данные:\n{e}")
 
     def load_app_settings(self):
         """Загрузка и применение настроек в главном окне."""
