@@ -8,6 +8,7 @@ from pathlib import Path
 from PIL import Image
 from typing import Literal
 from logger import logger
+from PIL.PngImagePlugin import PngInfo
 
 from config import settings, BASE_DIR
 from img_tools.sprite_processor import SpriteLayerProcessor
@@ -126,6 +127,19 @@ def save_anim(
                 comment=metadata_text
             )
         elif format == "webp":
+            # Формируем XML-структуру XMP в байтах
+            xmp_data = f"""<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+            <x:xmpmeta xmlns:x="adobe:ns:meta/">
+             <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+              <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">
+               <dc:title>{name}</dc:title>
+               <dc:rights>{image_copyright}</dc:rights>
+               <dc:description>License: {image_license}</dc:description>
+              </rdf:Description>
+             </rdf:RDF>
+            </x:xmpmeta>
+            <?xpacket end="w"?>""".encode('utf-8')
+
             resized_frames[0].save(
                 output_filepath,
                 format='WEBP',
@@ -134,10 +148,13 @@ def save_anim(
                 save_all=True,
                 duration=durations_ms,
                 loop=0,
-                comment=metadata_text
+                xmp=xmp_data
             )
         elif format == "apng":
             # APNG сохраняется через формат PNG с флагами save_all и append_images
+            pnginfo = PngInfo()
+            pnginfo.add_text("Comment", metadata_text)
+
             resized_frames[0].save(
                 output_filepath,
                 format='PNG',
@@ -145,11 +162,11 @@ def save_anim(
                 save_all=True,
                 duration=durations_ms,
                 loop=0,
-                comment=metadata_text
+                pnginfo=pnginfo
             )
         return output_filepath
     except Exception as e:
-        logger.error({e})
+        logger.error(e)
 
 
 def process_composite_anim(item: dict, name_file: str, format: Literal["gif", "webp", "apng"] = "gif", layer_configs: list = None):

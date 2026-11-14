@@ -230,6 +230,7 @@ def render(item: dict, direction: int = 0, frame: int = 0, overrides: dict = Non
                 layer_img = full_img.convert("RGBA")
         except Exception as e:
             logger.warning(f"Не удалось открыть текстуру слоя {layer_file_path}: {e}")
+            continue
 
         fw, fh = layer_img.width, layer_img.height
 

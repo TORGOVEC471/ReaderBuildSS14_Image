@@ -4,6 +4,7 @@ import json
 import sqlite3
 import yaml
 from logger import logger
+from config import BASE_DIR
 
 # --- 1. Быстрый кастомный SafeLoader с откатом на стандартный ---
 try:
@@ -112,8 +113,17 @@ def parse_suffixes(raw_suffix):
 
 # --- 3. Главная функция обработки прототипов с SQLite и инкрементальностью по mtime ---
 
-def process_prototypes(directory_path, db_path="prototypes_cache.db", build_id="default"):
+def process_prototypes(directory_path, db_path=None, build_id="default"):
     root_dir = Path(directory_path)
+
+    # Если путь к базе не передан явно, создаем его в BASE_DIR
+    if db_path is None:
+        db_path = BASE_DIR / "prototypes_cache.db"
+    else:
+        db_path = Path(db_path)
+        
+    # Убедимся, что родительская директория для базы данных существует (на всякий случай)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     
     # Инициализация SQLite базы для кэширования
     db_conn = sqlite3.connect(db_path)

@@ -4,7 +4,7 @@ __pycache__/
 settings.ini
 data.json
 data.json.bak
-tests/
+test_manual/
 benchmark.py
 build/
 dist/

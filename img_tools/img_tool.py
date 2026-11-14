@@ -56,7 +56,8 @@ def save_sprite(
         # Страховка: если в item копирайта нет, но указан путь к текстуре/файлу, попробуем поискать meta.json
         if not copyright_data and item.get("path"):
             texture_path = Path(item.get("path"))
-            json_path = texture_path.parent / "meta.json"
+            rsi_dir = texture_path if texture_path.is_dir() else texture_path.parent
+            json_path = rsi_dir / "meta.json"
             if json_path.exists():
                 try:
                     with open(json_path, "r", encoding="utf-8-sig") as f:
