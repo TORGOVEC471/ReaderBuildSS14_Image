@@ -3,10 +3,11 @@ import glob
 from datetime import datetime
 import logging
 from pathlib import Path
+from config import BASE_DIR
 
 def setup_logger(logger_name="ReaderBuildSS14"):
     # 1. Создаем папку Logs, если она не существует
-    folder_path_log = Path("Logs")
+    folder_path_log = BASE_DIR / "Logs"
     folder_path_log.mkdir(exist_ok=True) # exist_ok=True защитит от ошибки, если папка уже есть
 
     # 2. Формируем уникальное имя файла на основе текущего времени запуска

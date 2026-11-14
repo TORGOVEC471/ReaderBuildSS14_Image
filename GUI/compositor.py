@@ -7,7 +7,12 @@ from PyQt6.QtWidgets import (
     QGroupBox, QComboBox, QCheckBox, QColorDialog
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPixmap, QPainter, QColor
+from PyQt6.QtGui import QPixmap, QColor
+
+from PIL import Image
+from img_tools.sprite_processor import render
+from GUI.qt_image_tool import pil_to_qimage
+
 
 class LayerSelectorDialog(QDialog):
     """Окно выбора элемента из базы данных."""
@@ -79,18 +84,18 @@ class LayerSelectorDialog(QDialog):
             self.selected_item = current_item.data(Qt.ItemDataRole.UserRole)
             self.accept()
 
+
 class SceneBuilderDialog(QDialog):
-    """Главное окно сборщика сцены с оптимизированным рендером и кэшированием."""
+    """Главное окно сборщика сцены, полностью переведенное на единый render()."""
     def __init__(self, items: list, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Сборщик изображений и сцен (Scene Builder)")
         self.setMinimumSize(950, 750)
         self.items = items
 
-        # Кэш для ускорения отрисовки спрайтов: ключ -> QPixmap
-        self._pixmap_cache = {}
-
+        # Список слоев сцены
         self.scene_layers = []
+        self.current_rendered_canvas = QPixmap()
 
         layout = QHBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -286,65 +291,26 @@ class SceneBuilderDialog(QDialog):
             current_color = self.scene_layers[row]["custom_color"] or "#ffffff"
             color = QColorDialog.getColor(QColor(current_color), self, "Выберите цвет предмета")
             if color.isValid():
-                hex_color = color.name()
+                # Используем .name(QColor.NameFormat.HexArgb) чтобы поддерживать формат с альфа-каналом (если выбран)
+                hex_color = color.name(QColor.NameFormat.HexArgb) if hasattr(QColor, 'NameFormat') else color.name()
                 self.scene_layers[row]["custom_color"] = hex_color
                 self.lbl_color_preview.setStyleSheet(f"border: 1px solid #555; border-radius: 4px; background-color: {hex_color};")
                 self.update_layers_ui()
                 self.render_scene()
 
-    def tint_pixmap(self, pixmap: QPixmap, hex_color: str) -> QPixmap:
-        if not hex_color or pixmap.isNull():
-            return pixmap
-        
-        result = QPixmap(pixmap.size())
-        result.fill(Qt.GlobalColor.transparent)
-
-        painter = QPainter(result)
-        painter.drawPixmap(0, 0, pixmap)
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Multiply)
-        painter.fillRect(result.rect(), QColor(hex_color))
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
-        painter.drawPixmap(0, 0, pixmap)
-        painter.end()
-        return result
-
-    def get_cached_sub_pixmap(self, path: Path, frame_idx: int, native_w: int, native_h: int, color: str) -> QPixmap:
-        """Получение спрайта с кэшированием в памяти для ускорения отрисовки."""
-        cache_key = (str(path), frame_idx, color)
-        if cache_key in self._pixmap_cache:
-            return self._pixmap_cache[cache_key]
-
-        if not path.exists():
-            return QPixmap()
-
-        full_pixmap = QPixmap(str(path))
-        if full_pixmap.isNull():
-            return QPixmap()
-
-        # Нарезка спрайт-листа
-        if full_pixmap.width() > native_w and full_pixmap.width() % native_w == 0:
-            cols = full_pixmap.width() // native_w
-            col = frame_idx % cols
-            row = frame_idx // cols
-            sub_pixmap = full_pixmap.copy(col * native_w, row * native_h, native_w, native_h)
-        else:
-            sub_pixmap = full_pixmap
-
-        if color:
-            sub_pixmap = self.tint_pixmap(sub_pixmap, color)
-
-        self._pixmap_cache[cache_key] = sub_pixmap
-        return sub_pixmap
-
     def render_scene(self):
-        # Дефолтный размер, если слоев нет
-        max_w, max_h = 32, 32
+        """Рендерит сцену, последовательно накладывая слои через единый render()."""
+        native_w, native_h = 32, 32
         
-        # Предварительный список для хранения распарсенных данных подслоев, 
-        # чтобы не загружать картинки заново во втором проходе
-        prepared_layers = []
+        # Определяем максимальный размер под базовый размер элементов сцены
+        if self.scene_layers:
+            first_item = self.scene_layers[0]["item"]
+            native_w = first_item.get("size", {}).get("x", 32) or 32
+            native_h = first_item.get("size", {}).get("y", 32) or 32
 
-        # --- ПРОХОД 1: Поиск максимальных размеров холста ---
+        # Создаем итоговый холст через PIL
+        final_canvas = Image.new("RGBA", (native_w, native_h), (0, 0, 0, 0))
+
         for layer_data in self.scene_layers:
             if not layer_data["enabled"]:
                 continue
@@ -353,78 +319,54 @@ class SceneBuilderDialog(QDialog):
             current_state = layer_data["state"]
             custom_color = layer_data["custom_color"]
             frame_idx = layer_data["frame"]
-            item_path = Path(item.get("path", ""))
 
+            # Формируем layer_configs для передачи в единый метод render()
             sub_layers = item.get("layers", [])
             if not sub_layers:
-                sub_layers = [{"state": current_state, "color": custom_color, "sprite": "", "offset": [0, 0]}]
+                layer_configs = [{
+                    "enabled": True,
+                    "layer": {"state": current_state, "sprite": None, "color": custom_color},
+                    "frame": frame_idx,
+                    "direction": 0
+                }]
+            else:
+                layer_configs = []
+                for l in sub_layers:
+                    # Переопределяем стейт текущего слоя на выбранный в UI
+                    sub_l = l.copy()
+                    sub_l["state"] = current_state
+                    if custom_color:
+                        sub_l["color"] = custom_color
 
-            for sub_layer in sub_layers:
-                sub_state = sub_layer.get("state") or current_state
-                sub_sprite = sub_layer.get("sprite")
-                sub_color = custom_color if custom_color else sub_layer.get("color", "")
-                
-                sprite_filename = sub_sprite if sub_sprite else sub_state
-                sprite_path = item_path / f"{sprite_filename}.png"
-                
-                if not sprite_path.exists() and sub_state:
-                    sprite_path = item_path / f"{sub_state}.png"
-                if not sprite_path.exists():
-                    sprite_path = item_path / f"{current_state}.png"
+                    layer_configs.append({
+                        "enabled": sub_l.get("visible", True) and sub_l.get("enabled", True),
+                        "layer": sub_l,
+                        "frame": frame_idx,
+                        "direction": 0
+                    })
 
-                # Используем дефолтные 32x32 только как шаг нарезки спрайт-листа (если это сетка 32x32)
-                # Если у вас разный размер исходных плиток, лучше передавать динамический native размер из конфига предмета.
-                # Здесь для примера сохранения совместимости передаем 32, 32:
-                sub_pixmap = self.get_cached_sub_pixmap(sprite_path, frame_idx, 32, 32, sub_color)
-                if sub_pixmap.isNull():
-                    continue
+            overrides = {
+                "layer_configs": layer_configs,
+                "color": custom_color
+            }
 
-                offset = sub_layer.get("offset", [0, 0])
-                ox = offset[0] if len(offset) > 0 else 0
-                oy = offset[1] if len(offset) > 1 else 0
+            # Вызываем единый рендерер из sprite_processor
+            rendered_layer_img = render(item, direction=0, frame=frame_idx, overrides=overrides)
+            if not rendered_layer_img.size == (0, 0):
+                final_canvas = Image.alpha_composite(final_canvas, rendered_layer_img)
 
-                prepared_layers.append({
-                    "pixmap": sub_pixmap,
-                    "ox": ox,
-                    "oy": oy
-                })
+        # Конвертируем PIL Image в QImage -> QPixmap через стандартный метод
+        q_img = pil_to_qimage(final_canvas)
+        canvas_pixmap = QPixmap.fromImage(q_img)
+        self.current_rendered_canvas = canvas_pixmap
 
-                # Вычисляем габариты с учетом смещений (offset), чтобы холст не обрезал смещенные элементы
-                # Если элемент смещен вправо/вниз, общая ширина холста должна это учитывать
-                required_w = sub_pixmap.width() + abs(ox) * 2
-                required_h = sub_pixmap.height() + abs(oy) * 2
-
-                if required_w > max_w:
-                    max_w = required_w
-                if required_h > max_h:
-                    max_h = required_h
-
-        # --- ПРОХОД 2: Создание холста под максимальный размер и отрисовка ---
-        canvas = QPixmap(max_w, max_h)
-        canvas.fill(Qt.GlobalColor.transparent)
-
-        with QPainter(canvas) as painter:
-            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
-
-            for pl in prepared_layers:
-                sub_pixmap = pl["pixmap"]
-                ox = pl["ox"]
-                oy = pl["oy"]
-
-                # Центрируем относительно нового динамического холста + добавляем offset
-                cx = (max_w - sub_pixmap.width()) // 2 + ox
-                cy = (max_h - sub_pixmap.height()) // 2 + oy
-                
-                painter.drawPixmap(cx, cy, sub_pixmap)
-
-        # Масштабируем для отображения в QLabel (можно фиксировать размер превью или делать адаптивным)
-        display_pixmap = canvas.scaled(
+        # Масштабируем для отображения в QLabel с сохранением пиксельной четкости (FastTransformation)
+        display_pixmap = canvas_pixmap.scaled(
             256, 256,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.FastTransformation
         )
         self.canvas_label.setPixmap(display_pixmap)
-        self.current_rendered_canvas = canvas
 
     def move_layer_up(self):
         idx = self.layers_list_widget.currentRow()
@@ -456,7 +398,7 @@ class SceneBuilderDialog(QDialog):
 
         file_path, _ = QFileDialog.getSaveFileName(self, "Сохранить сборку", "composite_scene.png", "PNG Images (*.png)")
         if file_path:
-            # Сохранение с Nearest Neighbor (FastTransformation) для сохранения четкости пикселей
+            # Сохранение итогового холста
             exported = self.current_rendered_canvas.scaled(
                 256, 256, 
                 Qt.AspectRatioMode.KeepAspectRatio, 

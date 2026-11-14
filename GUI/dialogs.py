@@ -12,13 +12,15 @@ import json
 import img_tools.gif_tool as ToGIF
 import img_tools.img_tool as ToIMAGE
 from pathlib import Path
-from GUI.styles import (btn_style, group_style, btn_copy_style)
+from GUI.styles import (btn_style, group_style, btn_copy_style, btn_copyright_style)
 from GUI.threads import SaveDataThread
 from config import SETTINGS_FILE, icon_path, settings
 import copy
 from logger import logger
+import re
 
-from img_tools.sprite_processor import render, pil_to_qimage
+from img_tools.sprite_processor import render
+from GUI.qt_image_tool import pil_to_qimage
 from img_tools.parse_color import parse_color
 
 # Модальное окно с увеличенной картинкой и кнопками
@@ -139,8 +141,39 @@ class ImageDetailDialog(QDialog):
         # Дополнительная метаинформация (размеры, суффиксы, родители)
         self.path_label = QLabel()
         self.path_label.setWordWrap(True)
-        self.path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.path_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse | 
+            Qt.TextInteractionFlag.LinksAccessibleByMouse
+        )
+        # НЕ включаем setOpenExternalLinks(True), будем обрабатывать вручную через сигнал
+        self.path_label.linkActivated.connect(self.handle_link_clicked)
         info_layout.addWidget(self.path_label)
+
+        # --- СВОРАЧИВАЕМАЯ СЕКЦИЯ COPYRIGHT ---
+        self.btn_toggle_copyright = QPushButton("▶ Copyright и лицензия")
+        self.btn_toggle_copyright.setCheckable(True)
+        self.btn_toggle_copyright.setChecked(False)
+        self.btn_toggle_copyright.setStyleSheet(btn_copyright_style)
+        self.btn_toggle_copyright.toggled.connect(self.on_copyright_toggled)
+        info_layout.addWidget(self.btn_toggle_copyright)
+
+        # Контейнер для содержимого copyright, чтобы делать его скрытым/видимым
+        self.copyright_container = QWidget()
+        copyright_layout = QVBoxLayout(self.copyright_container)
+        copyright_layout.setContentsMargins(15, 0, 0, 0) # Небольшой отступ слева для красоты
+
+        self.lbl_copyright = QLabel()
+        self.lbl_copyright.setWordWrap(True)
+        self.lbl_copyright.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse | 
+            Qt.TextInteractionFlag.LinksAccessibleByMouse
+        )
+        self.lbl_copyright.linkActivated.connect(self.handle_link_clicked)
+        copyright_layout.addWidget(self.lbl_copyright)
+
+        self.copyright_container.setVisible(False) # Скрыто по умолчанию
+        info_layout.addWidget(self.copyright_container)
+        # -------------------------------------
 
         layout.addLayout(info_layout)
 
@@ -224,6 +257,16 @@ class ImageDetailDialog(QDialog):
         button.setEnabled(False)
         
         QTimer.singleShot(1200, lambda: [button.setText(original_text), button.setEnabled(True)])
+
+    def on_copyright_toggled(self, checked: bool):
+        """Сворачивает/разворачивает секцию Copyright по клику на стрелочку."""
+        self.copyright_container.setVisible(checked)
+        if checked:
+            self.btn_toggle_copyright.setText("▼ Copyright и лицензия")
+        else:
+            self.btn_toggle_copyright.setText("▶ Copyright и лицензия")
+
+        self.adjustSize()
 
     def on_builder_toggled(self, checked: bool):
         """Поведение при включении/выключении режима Сборщик."""
@@ -561,7 +604,11 @@ class ImageDetailDialog(QDialog):
         target_item = getattr(self, 'item', {})
         overrides = {"layer_configs": getattr(self, 'layer_configs', None)}
         
-        pil_img = render(target_item, overrides=overrides)
+        # Исправлено: передаём корректные параметры direction и frame (из первого слоя или дефолтные 0)
+        default_dir = self.layer_configs[0].get("direction", 0) if self.layer_configs else 0
+        default_frame = self.layer_configs[0].get("frame", 0) if self.layer_configs else 0
+        
+        pil_img = render(target_item, overrides=overrides, direction=default_dir, frame=default_frame)
         qimg = pil_to_qimage(pil_img)
         pixmap = QPixmap.fromImage(qimg)
         
@@ -585,8 +632,22 @@ class ImageDetailDialog(QDialog):
 
         self.img_label.setPixmap(pixmap)
 
+        # ---- РЕЖИМ СТРИМЕРА ----
+        # Читаем состояние галочки из настроек
+        settings = QSettings(str(SETTINGS_FILE), QSettings.Format.IniFormat)
+        streamer_mode = settings.value("streamer_mode", False, type=bool)
+
         # Вывод путей и метаданных
-        sprite_path = f"{self.item.get('path', '')}/{new_state}.png"
+        raw_sprite_path = f"{self.item.get('path', '')}/{new_state}.png"
+
+        if streamer_mode:
+            # Заменяем имя пользователя в пути на ~
+            home_dir = os.path.expanduser("~")
+            sprite_path = raw_sprite_path.replace(home_dir, "~")
+        else:
+            sprite_path = raw_sprite_path
+        # ------------------------
+
         width = self.item.get("size", {}).get("x", 0)
         height = self.item.get("size", {}).get("y", 0)
 
@@ -599,6 +660,7 @@ class ImageDetailDialog(QDialog):
         parent_text = f"<b>Родитель:</b> {parent}<br>" if parent else ""
         parents_text = f"<b>Цепочка родителей:</b> {parents_chain}<br>" if parents_chain else ""
 
+        # Основной блок информации (без копирайта)
         self.path_label.setText(
             f"{suffix_text}"
             f"<b>Путь:</b> {sprite_path}<br><br>"
@@ -606,6 +668,21 @@ class ImageDetailDialog(QDialog):
             f"<b>Размер файла:</b> {img_w}x{img_h}<br><br>"
             f"{parent_text}"
             f"{parents_text}"
+        )
+
+        # Заполняем скрываемый блок copyright и лицензией
+        copyright_data = self.item.get("copyright", "")
+        license_data = self.item.get("license", "")
+
+        def make_links_html(text):
+            url_pattern = re.compile(r'((https?://[^/]+/[^/]+)/([^/\s]+)([^\s]*))')
+            return url_pattern.sub(r'<a href="\1">Github/\3</a>', text)
+
+        formatted_copyright = make_links_html(copyright_data)
+
+        self.lbl_copyright.setText(
+            f"<b>Copyright:</b> {formatted_copyright}<br><br>"
+            f"<b>Лицензия:</b> {license_data}"
         )
 
     def on_yml_clicked(self):
@@ -618,67 +695,54 @@ class ImageDetailDialog(QDialog):
         if url:
             QDesktopServices.openUrl(url)
 
-    def on_gif_clicked(self):
-        json_path = Path(self.item.get("path", "")) / "meta.json"
-        state_name = self.item.get("state", "")
-        file_name = self.item.get("id", "")
+    def handle_link_clicked(self, url_str: str):
+        """Обработчик клика по любой ссылке внутри QLabel"""
+        logger.info(f"Кликнули на ссылку: {url_str}")
         
-        item_data = None
+        # Преобразуем строку в QUrl и открываем стандартным способом
+        url = QUrl(url_str)
+        if url.isValid():
+            QDesktopServices.openUrl(url)
+
+    def _sync_layer_configs_to_item(self):
+        """Синхронизирует текущие конфигурации слоев (direction, frame, enabled) в self.item["layers"] перед экспортом."""
         if self.cb_builder.isChecked():
             for i, config in enumerate(self.layer_configs):
                 if i < len(self.item.get("layers", [])):
                     self.item["layers"][i]["enabled"] = config["enabled"]
                     self.item["layers"][i]["frame"] = config["frame"]
                     self.item["layers"][i]["direction"] = config.get("direction", 0)
-            item_data = self.item
+            return self.item
+        return None
+
+    def on_gif_clicked(self):
+        json_path = Path(self.item.get("path", "")) / "meta.json"
+        state_name = self.item.get("state", "")
+        file_name = self.item.get("id", "")
+        item_data = self._sync_layer_configs_to_item()
         
-        ToGIF.process_json_file(json_path, state_name, file_name, format="gif", item=item_data)
+        ToGIF.process_json_file(json_path, state_name, file_name, format="gif", item=item_data, layer_configs=self.layer_configs)
     
     def on_webp_clicked(self):
         json_path = Path(self.item.get("path", "")) / "meta.json"
         state_name = self.item.get("state", "")
         file_name = self.item.get("id", "")
-        
-        item_data = None
-        if self.cb_builder.isChecked():
-            for i, config in enumerate(self.layer_configs):
-                if i < len(self.item.get("layers", [])):
-                    self.item["layers"][i]["enabled"] = config["enabled"]
-                    self.item["layers"][i]["frame"] = config["frame"]
-                    self.item["layers"][i]["direction"] = config.get("direction", 0)
-            item_data = self.item
+        item_data = self._sync_layer_configs_to_item()
 
-        ToGIF.process_json_file(json_path, state_name, file_name, format="webp", item=item_data)
+        ToGIF.process_json_file(json_path, state_name, file_name, format="webp", item=item_data, layer_configs=self.layer_configs)
 
     def on_apng_clicked(self):
         json_path = Path(self.item.get("path", "")) / "meta.json"
         state_name = self.item.get("state", "")
         file_name = self.item.get("id", "")
-        
-        item_data = None
-        if self.cb_builder.isChecked():
-            for i, config in enumerate(self.layer_configs):
-                if i < len(self.item.get("layers", [])):
-                    self.item["layers"][i]["enabled"] = config["enabled"]
-                    self.item["layers"][i]["frame"] = config["frame"]
-                    self.item["layers"][i]["direction"] = config.get("direction", 0)
-            item_data = self.item
+        item_data = self._sync_layer_configs_to_item()
 
-        ToGIF.process_json_file(json_path, state_name, file_name, format="apng", item=item_data)
+        ToGIF.process_json_file(json_path, state_name, file_name, format="apng", item=item_data, layer_configs=self.layer_configs)
 
     def process_image_with_mode(self, mode: str):
         image_path = Path(f"{self.item.get('path', '')}/{self.item.get('state', '')}.png")
         image_name = f"{self.item.get('id', '')}-{self.item.get('state', '')}"
-        
-        if self.cb_builder.isChecked():
-            for i, config in enumerate(self.layer_configs):
-                if i < len(self.item.get("layers", [])):
-                    self.item["layers"][i]["enabled"] = config["enabled"]
-                    self.item["layers"][i]["frame"] = config["frame"]
-                    self.item["layers"][i]["direction"] = config.get("direction", 0)
-            item_data = self.item
-        else:
-            item_data = None
+        item_data = self._sync_layer_configs_to_item()
     
         ToIMAGE.process_path(image_path, image_name, mode=mode, item=item_data)
 
@@ -691,6 +755,9 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose) # Уничтожит объект при закрытии окна
+
+        # Инициализируем флаг загрузки заранее, чтобы методы проверки не падали
+        self.is_loading = False
 
         self.setWindowTitle("Настройки")
         self.setFixedSize(800, 650) # Немного увеличили высоту под прогресс-бар
@@ -769,15 +836,27 @@ class SettingsDialog(QDialog):
 
         main_layout.addWidget(group_build)
 
+        # Блок режима стримера / конфиденциальности
+        group_privacy = QGroupBox("Приватность")
+        group_privacy.setStyleSheet(group_style)
+        group_privacy_layout = QVBoxLayout()
+
+        self.cb_streamer_mode = QCheckBox("Режим стримера (скрывать пути и личные данные)")
+        group_privacy_layout.addWidget(self.cb_streamer_mode)
+        group_privacy.setLayout(group_privacy_layout)
+
+        main_layout.addWidget(group_privacy)
+
         # Перезагрузка данных
         group_reloads = QGroupBox("Перезагрузить данные")
         group_reloads.setStyleSheet(group_style)
         group_reloads_layout = QVBoxLayout()
 
+        # Обновленный текст подсказки (без требования перезапуска приложения)
         reload_label = QLabel("""
-Перед перезапуском, в случае если вы что-то поменяли в пути сборки или впервые его установили:<br>
-* Нажмите "OK" и перезапустите программу, чтобы применить изменения.<br>
-* После этого нажмите "ПЕРЕЗАГРУЗИТЬ", и данные будут установлены!
+Если вы поменяли путь сборки или впервые его установили:<br>
+- Нажмите кнопку "OK", чтобы сохранить настройки.<br>
+- После этого нажмите кнопку "ПЕРЕЗАГРУЗИТЬ", и данные обновятся автоматически без перезапуска программы!
         """)
 
         self.btn_reload = QPushButton("ПЕРЕЗАГРУЗИТЬ")
@@ -822,10 +901,12 @@ class SettingsDialog(QDialog):
         """Загрузка данных из settings.ini в виджеты."""
         saved_path_save = self.settings.value("path_saves", "", type=str)
         saved_path_build = self.settings.value("path_build", ".", type=str)
+        streamer_mode = self.settings.value("streamer_mode", False, type=bool) # Читаем настройку
 
         # Устанавливаем пути в QLineEdit
         self.path_save_input.setText(saved_path_save)
         self.path_build_input.setText(saved_path_build)
+        self.cb_streamer_mode.setChecked(streamer_mode) # Устанавливаем галочку
 
     def on_accept_clicked(self):
         self.save_settings()
@@ -835,6 +916,7 @@ class SettingsDialog(QDialog):
         """Сохранение данных из виджетов в settings.ini."""
         self.settings.setValue("path_build", self.path_build_input.text())
         self.settings.setValue("path_saves", self.path_save_input.text())
+        self.settings.setValue("streamer_mode", self.cb_streamer_mode.isChecked()) # Сохраняем галочку
 
     def confirm_action(self):
         # Используем runtime-объект настроек
@@ -869,6 +951,7 @@ class SettingsDialog(QDialog):
             try:
                 self.save_thread = SaveDataThread()
                 self.save_thread.finished_signal.connect(self.on_save_finished)
+                self.save_thread.failed_signal.connect(self.on_save_failed)  # Подключаем обработчик ошибок
                 self.save_thread.finished.connect(self.save_thread.deleteLater)
                 self.save_thread.start()
             except Exception as e:
@@ -885,25 +968,47 @@ class SettingsDialog(QDialog):
         self.btn_reload.setText("ПЕРЕЗАГРУЗИТЬ")
         self.btn_reload.setEnabled(True)
 
-        # Больше не просим перезапускать приложение!
         QMessageBox.information(
             self, 
             "Готово!", 
             "Перезагрузка данных успешно завершена!"
         )
-        
-        # Сигнализируем главному окну обновить сетку элементов
         self.data_reloaded.emit()
+
+    def on_save_failed(self, error_message):
+        """Срабатывает, если в потоке сохранения произошла ошибка (например, SQLite недоступен)"""
+        self.is_loading = False
+        self.progress_bar.setVisible(False)
+        self.set_ui_locked(False)
+        self.btn_reload.setText("ПЕРЕЗАГРУЗИТЬ")
+        self.btn_reload.setEnabled(True)
+
+        logger.error(f"Ошибка в потоке сохранения данных: {error_message}")
+        QMessageBox.critical(
+            self,
+            "Ошибка!",
+            f"Не удалось выполнить перезагрузку данных:\n{error_message}"
+        )
 
     def set_ui_locked(self, locked):
         """Блокирует/разблокирует интерфейс на время загрузки"""
-        # Находим button_box и отключаем/включаем кнопкy закрытия/отмены
         button_box = self.findChild(QDialogButtonBox)
         if button_box:
             button_box.setEnabled(not locked)
 
+    def reject(self):
+        """Защита от закрытия окна по нажатию Esc во время работы потока"""
+        if self.is_loading:
+            QMessageBox.warning(
+                self,
+                "Внимание",
+                "Идет процесс перезагрузки данных!\nПожалуйста, дождитесь окончания процесса."
+            )
+            return
+        super().reject()
+
     def closeEvent(self, event):
-        """Защита от закрытия окна во время работы потока"""
+        """Защита от закрытия окна крестиком во время работы потока"""
         if self.is_loading:
             QMessageBox.warning(
                 self,

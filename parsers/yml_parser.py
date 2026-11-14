@@ -112,13 +112,23 @@ def parse_suffixes(raw_suffix):
 
 # --- 3. Главная функция обработки прототипов с SQLite и инкрементальностью по mtime ---
 
-def process_prototypes(directory_path, db_path="prototypes_cache.db"):
+def process_prototypes(directory_path, db_path="prototypes_cache.db", build_id="default"):
     root_dir = Path(directory_path)
     
     # Инициализация SQLite базы для кэширования
     db_conn = sqlite3.connect(db_path)
     cursor = db_conn.cursor()
     
+    # ВАЖНО: Включаем foreign_keys, чтобы работал ON DELETE CASCADE
+    cursor.execute("PRAGMA foreign_keys = ON;")
+    
+    # 1. СНАЧАЛА создаем ВСЕ необходимые таблицы (предотвращает ошибки "no such table")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS files (
             file_path TEXT PRIMARY KEY,
@@ -134,6 +144,22 @@ def process_prototypes(directory_path, db_path="prototypes_cache.db"):
         )
     """)
     db_conn.commit()
+    
+    # 2. Проверяем текущий билд ПОСЛЕ создания таблицы metadata
+    cursor.execute("SELECT value FROM metadata WHERE key = 'current_build'")
+    row = cursor.fetchone()
+    stored_build = row[0] if row else None
+    
+    # Если билд изменился — очищаем старые данные
+    if stored_build != build_id:
+        cursor.execute("DELETE FROM entities")
+        cursor.execute("DELETE FROM files")
+        cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('current_build', ?)", (build_id,))
+        db_conn.commit()
+    elif not stored_build:
+        # Если таблица была пустой, гарантируем запись текущего билда
+        cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('current_build', ?)", (build_id,))
+        db_conn.commit()
 
     # Получаем текущие файлы на диске и их mtime
     current_files = {}
@@ -161,16 +187,25 @@ def process_prototypes(directory_path, db_path="prototypes_cache.db"):
         if f_path not in cached_files or cached_files[f_path] != mtime:
             files_to_parse.append(f_path)
 
-    # ЭТАП 1: Инкрементальное парсинг (только измененные/новые файлы)
+    # ЭТАП 1: Инкрементальный парсинг (только измененные/новые файлы)
     for file_path_str in files_to_parse:
         file_path = Path(file_path_str)
         try:
-            # Удаляем старые записи сущностей для этого файла перед обновлением
+            # 1. СНАЧАЛА добавляем/обновляем запись в таблице files,
+            # чтобы удовлетворить требование FOREIGN KEY для будущих сущностей
+            cursor.execute(
+                "INSERT OR REPLACE INTO files (file_path, mtime) VALUES (?, ?)",
+                (file_path_str, current_files[file_path_str])
+            )
+            
+            # 2. Удаляем старые записи сущностей для этого файла перед обновлением
             cursor.execute("DELETE FROM entities WHERE file_path = ?", (file_path_str,))
             
             with open(file_path, 'r', encoding='utf-8-sig') as f:
                 content = yaml.load(f, Loader=SS14YamlLoader)
                 if not isinstance(content, list):
+                    logger.debug(f"Файл {file_path_str} пропущен: содержимое не является списком.")
+                    db_conn.commit()
                     continue
                 
                 entities_to_insert = []
@@ -187,18 +222,15 @@ def process_prototypes(directory_path, db_path="prototypes_cache.db"):
                         "INSERT OR REPLACE INTO entities (entity_id, file_path, raw_data) VALUES (?, ?, ?)",
                         entities_to_insert
                     )
+                else:
+                    logger.debug(f"В файле {file_path_str} не найдено сущностей с type == 'entity' и id.")
             
-            # Обновляем mtime файла в базе
-            cursor.execute(
-                "INSERT OR REPLACE INTO files (file_path, mtime) VALUES (?, ?)",
-                (file_path_str, current_files[file_path_str])
-            )
             db_conn.commit()
         except Exception as e:
             logger.error(f"Ошибка при чтении файла {file_path_str}: {e}")
             db_conn.rollback()
 
-    # Загружаем всю актуальную базу сущностей в оперативную память для быстрого построения цепочек
+    # Загружаем всю актуальную базу сущностей в оперативную память...
     cursor.execute("SELECT entity_id, file_path, raw_data FROM entities")
     entities_db = {}
     for row in cursor.fetchall():
@@ -222,7 +254,6 @@ def process_prototypes(directory_path, db_path="prototypes_cache.db"):
         new_visited = visited | {entity_id}
 
         if parents:
-            # Поддержка нескольких родителей (если parent — список) или одного (строка)
             if isinstance(parents, str):
                 parents = [parents]
             elif isinstance(parents, list):
@@ -281,7 +312,6 @@ def process_prototypes(directory_path, db_path="prototypes_cache.db"):
         file_name = info['file']
         raw_entity = info['raw']
         
-        # 🟢 ФИЛЬТР: Пропускаем абстрактные прототипы, чтобы они не попадали в карточки
         if raw_entity.get('abstract', False):
             continue
 

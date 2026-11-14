@@ -1,8 +1,6 @@
 import json
 from pathlib import Path
 from PIL import Image
-from PIL.ImageQt import ImageQt
-from PyQt6.QtGui import QImage
 from logger import logger
 from .parse_color import parse_color
 
@@ -141,13 +139,6 @@ class SpriteLayerProcessor:
             pass
         return 0, 0
 
-def pil_to_qimage(pil_img: Image.Image) -> QImage:
-    """Конвертирует PIL.Image в QImage для использования в PyQt."""
-    if pil_img.mode != "RGBA":
-        pil_img = pil_img.convert("RGBA")
-    # Используем стандартный ImageQt из библиотеки Pillow
-    return QImage(ImageQt(pil_img))
-
 def apply_tint_to_image(img: Image.Image, color_hex: str) -> Image.Image:
     """Накладывает цвет (tint) путем умножения RGB и альфа каналов с сохранением объёма и текстуры."""
     r_t, g_t, b_t, a_t = parse_color(color_hex)
@@ -163,7 +154,7 @@ def apply_tint_to_image(img: Image.Image, color_hex: str) -> Image.Image:
         
     return Image.merge("RGBA", (r, g, b, a))
 
-def render(item: dict, direction: int = 0, frame: int = 0, overrides: dict = None) -> Image.Image:
+def render(item: dict, direction: int = 0, frame: int = 0, overrides: dict = None, mode: str = "Original") -> Image.Image:
     """
     Единый рендерер слоев предмета. Возвращает PIL.Image в нативном разрешении.
     """
@@ -180,7 +171,15 @@ def render(item: dict, direction: int = 0, frame: int = 0, overrides: dict = Non
     if layer_configs is None:
         layers = item.get("layers", [])
         if layers:
-            layer_configs = [{"enabled": True, "layer": l, "frame": frame, "direction": direction} for l in layers]
+            layer_configs = [
+                {
+                    "enabled": l.get("visible", True) and l.get("enabled", True),
+                    "layer": l,
+                    "frame": frame,
+                    "direction": direction
+                } 
+                for l in layers
+            ]
         else:
             state_val = item.get("state")
             if state_val:
@@ -200,11 +199,14 @@ def render(item: dict, direction: int = 0, frame: int = 0, overrides: dict = Non
         return canvas
 
     for config in layer_configs:
-        if not config.get("enabled", True):
-            continue
-
         layer = config.get("layer", {})
-        if layer.get("visible") is False or layer.get("enabled") is False:
+        
+        # Учитываем выбор пользователя в UI (config.get("enabled")), 
+        # а если он не задан явно — опираемся на дефолтные visible/enabled слоя в JSON
+        default_enabled = layer.get("visible", True) and layer.get("enabled", True)
+        is_enabled = config.get("enabled", default_enabled)
+        
+        if not is_enabled:
             continue
 
         # Позволяем переопределять направление и кадр точечно через конфиг или аргументы

@@ -9,3 +9,4 @@ benchmark.py
 build/
 dist/
 Logs/
+prototypes_cache.db

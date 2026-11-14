@@ -14,7 +14,7 @@ from img_tools.sprite_processor import SpriteLayerProcessor, render
 
 
 # Папка, куда сохраняются итоговые анимации
-if not settings.path_saves or settings.path_saves == ".":
+if not settings.path_saves or settings.path_saves == Path("."):
     OUTPUT_DIR = Path(__file__).parent / "Saves/animations"
 else:
     OUTPUT_DIR = Path(settings.path_saves) / "Saves/animations"
@@ -69,9 +69,18 @@ def save_anim(
 
     frames = []
     effective_frames = frame_count if frame_count > 0 else cols
+    
+    # Вычисляем, сколько строк занимает одно направление с учетом переноса кадров по колонкам
+    frames_per_row = cols if cols > 0 else 1
+    rows_per_direction = (effective_frames + frames_per_row - 1) // frames_per_row
+
     for f_idx in range(effective_frames):
-        col = f_idx % cols
-        row = dir_idx
+        c_offset = f_idx % frames_per_row
+        r_offset = f_idx // frames_per_row
+        
+        col = c_offset
+        # Учитываем смещение по строкам для конкретного направления
+        row = (dir_idx * rows_per_direction) + r_offset
         
         x1 = col * tile_w
         y1 = row * tile_h
@@ -141,7 +150,7 @@ def save_anim(
         logger.error({e})
 
 
-def process_composite_anim(item: dict, name_file: str, format: Literal["gif", "webp", "apng"] = "gif"):
+def process_composite_anim(item: dict, name_file: str, format: Literal["gif", "webp", "apng"] = "gif", layer_configs: list = None):
     """Собирает многослойную анимацию с синхронизацией слоев по времени."""
     base_textures_path = SpriteLayerProcessor.get_base_textures_path(item)
     
@@ -151,14 +160,28 @@ def process_composite_anim(item: dict, name_file: str, format: Literal["gif", "w
 
     native_w = item.get("size", {}).get("x", 32) or 32
     native_h = item.get("size", {}).get("y", 32) or 32
-    layers = item.get("layers", [])
     item_state = item.get("state", "default")
+
+    # Использование layer_configs из интерфейса или fallback на item["layers"]
+    if layer_configs is not None:
+        configs = layer_configs
+    else:
+        configs = [{"layer": l, "enabled": l.get("visible", True) and l.get("enabled", True), "direction": l.get("direction", 0)} for l in item.get("layers", [])]
 
     layer_infos = []
 
     # 1. Анализируем слои и собираем их кадры + задержки
-    for layer in layers:
-        if not layer.get("enabled", layer.get("visible", True)):
+    for config in configs:
+        if isinstance(config, dict) and "layer" in config:
+            layer = config["layer"]
+            is_enabled = config.get("enabled", True)
+            selected_dir = config.get("direction", 0)
+        else:
+            layer = config
+            is_enabled = layer.get("visible", True) and layer.get("enabled", True)
+            selected_dir = layer.get("direction", 0)
+
+        if not is_enabled:
             continue
         
         ldir = base_textures_path / layer.get("sprite") if layer.get("sprite") else Path(item.get("path", ""))
@@ -170,7 +193,7 @@ def process_composite_anim(item: dict, name_file: str, format: Literal["gif", "w
             lfile, ldir, st_name, native_w, native_h
         )
 
-        selected_dir = layer.get("direction", 0) % directions_count if directions_count > 0 else 0
+        selected_dir = selected_dir % directions_count if directions_count > 0 else 0
         meta_path = ldir / "meta.json"
         if meta_path.exists():
             try:
@@ -189,13 +212,12 @@ def process_composite_anim(item: dict, name_file: str, format: Literal["gif", "w
         if not l_delays:
             l_delays = [0.1] * f_count
 
-        # Нормализуем задержки в миллисекунды для каждого кадра слоя
         delays_ms = [int(d * 1000) if d < 10 else int(d) for d in l_delays]
         if len(delays_ms) < f_count:
             delays_ms = (delays_ms * ((f_count // len(delays_ms)) + 1))[:f_count]
 
-        # Загружаем сами кадры конкретного слоя для выбранного направления
         with Image.open(lfile) as img:
+            img = img.convert("RGBA")
             raw_img = np.array(img)
 
         sheet_h, sheet_w = raw_img.shape[0], raw_img.shape[1]
@@ -283,7 +305,7 @@ def process_composite_anim(item: dict, name_file: str, format: Literal["gif", "w
                 accum += d
             
             layer_img = info["frames"][frame_idx % info["frame_count"]]
-            resized_layer = layer_img.resize((target_width, target_height), Image.NEAREST)
+            resized_layer = layer_img.resize((target_width, target_height), Image.NEAREST).convert("RGBA")  # <--- Гарантирует RGBA
             canvas.alpha_composite(resized_layer)
 
         timeline_frames.append(canvas)
@@ -293,9 +315,27 @@ def process_composite_anim(item: dict, name_file: str, format: Literal["gif", "w
         logger.warning(f"No frames generated for {name_file}")
         return
 
-    # Получаем copyright и license
+    # Получаем copyright и license с фоллбэком на meta.json
     copyright_data = item.get('copyright', '')
     license_data = item.get('license', '')
+
+    if not copyright_data or not license_data:
+        # Пробуем найти meta.json через базовый путь текстур слоя или самого item
+        meta_path = base_textures_path / "meta.json"
+        if not meta_path.exists() and item.get("path"):
+            meta_path = Path(item.get("path")) / "meta.json"
+            
+        if meta_path.exists():
+            try:
+                with open(meta_path, "r", encoding="utf-8-sig") as f:
+                    meta_json_data = json.load(f)
+                    if not copyright_data:
+                        copyright_data = meta_json_data.get('copyright', '')
+                    if not license_data:
+                        license_data = meta_json_data.get('license', '')
+            except Exception:
+                pass
+
     copyrights = [copyright_data] if copyright_data else []
     licenses = [license_data] if license_data else []
 
@@ -328,12 +368,19 @@ def process_composite_anim(item: dict, name_file: str, format: Literal["gif", "w
         logger.error({e})
 
 
-def process_json_file(json_file: Path | str, target_state: str = None, name_file: str = "", format: Literal["gif", "webp", "apng"] = "gif", item: dict = None) -> None:
+def process_json_file(
+        json_file: Path | str,
+        target_state: str = None,
+        name_file: str = "",
+        format: Literal["gif", "webp", "apng"] = "gif",
+        item: dict = None,
+        layer_configs: list = None
+    ) -> None:
     json_file = Path(json_file)
     
     if item and item.get("layers"):
         sprite_name = name_file or item.get("id", "composite_anim")
-        process_composite_anim(item, sprite_name, format=format)
+        process_composite_anim(item, sprite_name, format=format, layer_configs=layer_configs)
         return
 
     with open(json_file, "r", encoding="utf-8-sig") as json_content:

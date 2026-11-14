@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
 import json
 from GUI.main_window import MainWindow
 from logger import logger
+from config import DATA_FILE
 
 def handle_exception(exc_type, exc_value, exc_traceback):
     """Глобальный перехватчик необработанных исключений"""
@@ -38,7 +39,7 @@ sys.excepthook = handle_exception
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
-    file_path = "data.json"
+    file_path = DATA_FILE
     items = []
 
     # 1. Проверяем, существует ли файл
@@ -53,7 +54,7 @@ if __name__ == "__main__":
     else:
         # 2. Файл существует, пытаемся прочитать и распарсить
         try:
-            with open(file_path, "r", encoding="utf-8") as file:
+            with open(file_path, "r", encoding="utf-8-sig") as file:
                 items = json.load(file)
             logger.info("Данные загружены с data.json!")
         except json.JSONDecodeError as e:
@@ -61,7 +62,7 @@ if __name__ == "__main__":
             logger.error(f"Файл поврежден (JSONDecodeError): {e}")
             
             # Создаем бэкап поврежденного файла перед перезаписью
-            backup_path = "data.json.bak"
+            backup_path = DATA_FILE.with_suffix(DATA_FILE.suffix + ".bak")
             try:
                 shutil.copy2(file_path, backup_path)
                 logger.info(f"Создан бэкап поврежденного файла: {backup_path}")

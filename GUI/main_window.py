@@ -10,10 +10,11 @@ from GUI.styles import (COLUMNS, PAGE_SIZE, menu_bar_style)
 from GUI.widgets import ClickableLabel
 from GUI.dialogs import ImageDetailDialog, SettingsDialog
 from GUI.compositor import SceneBuilderDialog
-from config import SETTINGS_FILE, icon_path
+from config import SETTINGS_FILE, icon_path, DATA_FILE
 from logger import logger
 import json
-from img_tools.sprite_processor import render, pil_to_qimage
+from img_tools.sprite_processor import render
+from GUI.qt_image_tool import pil_to_qimage
 
 # Главное окно
 class MainWindow(QMainWindow):
@@ -356,7 +357,7 @@ class MainWindow(QMainWindow):
 
     def reload_items_and_grid(self):
         """Перечитывает data.json и обновляет сетку карточек без перезапуска приложения"""
-        file_path = "data.json"
+        file_path = DATA_FILE
         try:
             if os.path.exists(file_path):
                 with open(file_path, "r", encoding="utf-8") as file:

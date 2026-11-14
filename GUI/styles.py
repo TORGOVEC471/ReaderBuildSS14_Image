@@ -76,3 +76,16 @@ btn_copy_style = """
     background: #d5d5d5;
     }
 """
+
+btn_copyright_style = """
+    QPushButton {
+        border: none;
+        text-align: left;
+        font-weight: bold;
+        color: #1a73e8;
+        background-color: transparent;
+    }
+    QPushButton:hover {
+        text-decoration: underline;
+    }
+"""

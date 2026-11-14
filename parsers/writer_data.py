@@ -8,24 +8,24 @@ from logger import logger
 DIR_TEXTURES = 'Resources/Textures'
 DIR_PROTOTYPES = 'Resources/Prototypes'
 DIR_FTL_LOCALE = f'Resources/Locale/{LOCALE}'
-PATH_BUILD = settings.path_build
-
-TARGET_DIR_YML = PATH_BUILD / DIR_PROTOTYPES
-TARGET_DIR_FTL = PATH_BUILD / DIR_FTL_LOCALE
 
 
-def load_rsi_info(rsi_path: Path) -> tuple[dict, list[str], str | None]:
-    """Загружает метаданные RSI (размер, список стейтов и дефолтный стейт) за один раз."""
+def load_rsi_info(rsi_path: Path) -> tuple[dict, list[str], str | None, str | None, str | None]:
+    """Загружает метаданные RSI (размер, список стейтов, дефолтный стейт, copyright и license)."""
     meta_path = rsi_path / "meta.json"
     size = {"x": 32, "y": 32}
     states = []
     default_state = None
+    copyright_data = None
+    license_data = None
 
     if meta_path.is_file():
         try:
             with open(meta_path, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
                 size = data.get("size", size)
+                copyright_data = data.get("copyright")
+                license_data = data.get("license")
                 raw_states = data.get("states", [])
                 if isinstance(raw_states, list):
                     states = [s.get("name") for s in raw_states if s.get("name")]
@@ -37,10 +37,9 @@ def load_rsi_info(rsi_path: Path) -> tuple[dict, list[str], str | None]:
     # Добавляем стейты из названий PNG-файлов, если они есть
     if rsi_path.is_dir():
         png_states = [file.stem for file in rsi_path.glob("*.png") if file.is_file()]
-        # Объединяем списки без дубликатов, сохраняя порядок
         states = list(dict.fromkeys(states + png_states))
 
-    return size, states, default_state
+    return size, states, default_state, copyright_data, license_data
 
 
 def find_ftl_info(entity: dict, parsed_ftl: dict) -> tuple[str | None, str | None, str | None]:
@@ -52,7 +51,6 @@ def find_ftl_info(entity: dict, parsed_ftl: dict) -> tuple[str | None, str | Non
     desc_ftl = local_info.get('desc')
     suffix_ftl = local_info.get('suffix')
 
-    # Фоллбэк: если своего FTL нет, подтягиваем из родителей
     if (not name_ftl or not desc_ftl) and entity.get('parents_chain'):
         for parent_id in entity['parents_chain']:
             parent_key = f"ent-{parent_id}"
@@ -68,13 +66,19 @@ def find_ftl_info(entity: dict, parsed_ftl: dict) -> tuple[str | None, str | Non
     return name_ftl, desc_ftl, suffix_ftl
 
 
-def save_data_build(target_dir_yml: Path, target_dir_ftl: Path):
-    logger.info(f"Начинаем запись в {DATA_FILE} для локали: {LOCALE}")
+def save_data_build(target_dir_yml: Path = None, target_dir_ftl: Path = None):
+    # Динамически получаем актуальный путь билда из настроек в момент вызова
+    path_build = settings.path_build
+    
+    if target_dir_yml is None:
+        target_dir_yml = path_build / DIR_PROTOTYPES
+    if target_dir_ftl is None:
+        target_dir_ftl = path_build / DIR_FTL_LOCALE
+
+    logger.info(f"Начинаем запись в {DATA_FILE} для локали: {LOCALE} (Путь билда: {path_build})")
     sprite_data_list = []
     parsed_data = YMLF.process_prototypes(target_dir_yml)
     
-    # Если папки локали нет (например, для en-US папка отсутствует), 
-    # FTLR.load_ftl_directory вернет пустой словарь без падений благодаря pathlib
     parsed_ftl = FTLR.load_ftl_directory(target_dir_ftl)
 
     for file_name, entities in parsed_data.items():
@@ -85,8 +89,8 @@ def save_data_build(target_dir_yml: Path, target_dir_ftl: Path):
             if not sprite:
                 continue
 
-            rsi_path = PATH_BUILD / DIR_TEXTURES / sprite.removeprefix("/Textures/")
-            size, states, default_state = load_rsi_info(rsi_path)
+            rsi_path = path_build / DIR_TEXTURES / sprite.removeprefix("/Textures/")
+            size, states, default_state, copyright_data, license_data = load_rsi_info(rsi_path)
             state_value = entity.get('state') or default_state
             name_ftl, desc_ftl, suffix_ftl = find_ftl_info(entity, parsed_ftl)
 
@@ -104,7 +108,9 @@ def save_data_build(target_dir_yml: Path, target_dir_ftl: Path):
                 "state": state_value,
                 "states": states,
                 "layers": entity.get('layers'),
-                "size": size
+                "size": size,
+                "copyright": copyright_data,   # <--- Добавлено
+                "license": license_data        # <--- Добавлено
             })
 
     with open(DATA_FILE, "w", encoding="utf-8") as file:
@@ -120,4 +126,4 @@ def save_data_build(target_dir_yml: Path, target_dir_ftl: Path):
 
 
 if __name__ == "__main__":
-    save_data_build(TARGET_DIR_YML, TARGET_DIR_FTL)
+    save_data_build()

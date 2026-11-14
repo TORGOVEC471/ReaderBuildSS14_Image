@@ -9,7 +9,7 @@ from logger import logger
 from .sprite_processor import render
 
 # Папка, куда сохраняются итоговые .png изображения
-if not settings.path_saves or settings.path_saves == ".":
+if not settings.path_saves or settings.path_saves == Path("."):
     OUTPUT_DIR = Path(__file__).parent / "Saves/images"
 else:
     OUTPUT_DIR = Path(settings.path_saves) / "Saves/images"
@@ -46,6 +46,9 @@ def save_sprite(
         tile_w = item.get("size", {}).get("x", 32) or 32
         tile_h = item.get("size", {}).get("y", 32) or 32
         image = build_composite_image(item, mode)
+        
+        copyright_data = item.get("copyright", "")
+        license_data = item.get("license", "")
 
     # Стандартный режим отрисовки одного спрайта
     if image is None:
