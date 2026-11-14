@@ -705,13 +705,16 @@ class ImageDetailDialog(QDialog):
             QDesktopServices.openUrl(url)
 
     def _sync_layer_configs_to_item(self):
-        """Синхронизирует текущие конфигурации слоев (direction, frame, enabled) в self.item["layers"] перед экспортом."""
+        """Синхронизирует текущие конфигурации слоев (direction, frame, enabled), а также copyright и license в self.item["layers"] перед экспортом."""
         if self.cb_builder.isChecked():
             for i, config in enumerate(self.layer_configs):
                 if i < len(self.item.get("layers", [])):
                     self.item["layers"][i]["enabled"] = config["enabled"]
                     self.item["layers"][i]["frame"] = config["frame"]
                     self.item["layers"][i]["direction"] = config.get("direction", 0)
+
+            self.item["copyright"] = self.item.get("copyright", "")
+            self.item["license"] = self.item.get("license", "")
             return self.item
         return None
 

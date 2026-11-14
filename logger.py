@@ -2,7 +2,6 @@ import os
 import glob
 from datetime import datetime
 import logging
-from pathlib import Path
 from config import BASE_DIR
 
 def setup_logger(logger_name="ReaderBuildSS14"):

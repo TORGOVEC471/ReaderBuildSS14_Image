@@ -36,16 +36,20 @@ class AppSettings:
         config = configparser.ConfigParser()
         if SETTINGS_FILE.exists():
             config.read(SETTINGS_FILE, encoding="utf-8")
-            return Path(config.get("General", "path_build", fallback="."))
-        return Path(".")
+            raw_path = config.get("General", "path_build", fallback=".")
+            p = Path(raw_path)
+            return (BASE_DIR / p).resolve() if not p.is_absolute() else p.resolve()
+        return BASE_DIR
 
     @property
     def path_saves(self) -> Path:
         config = configparser.ConfigParser()
         if SETTINGS_FILE.exists():
             config.read(SETTINGS_FILE, encoding="utf-8")
-            return Path(config.get("General", "path_saves", fallback="."))
-        return Path(".")
+            raw_path = config.get("General", "path_saves", fallback=".")
+            p = Path(raw_path)
+            return (BASE_DIR / p).resolve() if not p.is_absolute() else p.resolve()
+        return BASE_DIR
 
 # Экспортируем экземпляр объекта настроек
 settings = AppSettings()

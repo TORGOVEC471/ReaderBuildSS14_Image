@@ -154,7 +154,7 @@ def apply_tint_to_image(img: Image.Image, color_hex: str) -> Image.Image:
         
     return Image.merge("RGBA", (r, g, b, a))
 
-def render(item: dict, direction: int = 0, frame: int = 0, overrides: dict = None, mode: str = "Original") -> Image.Image:
+def render(item: dict, direction: int = 0, frame: int = 0, overrides: dict = None) -> Image.Image:
     """
     Единый рендерер слоев предмета. Возвращает PIL.Image в нативном разрешении.
     """
@@ -175,8 +175,8 @@ def render(item: dict, direction: int = 0, frame: int = 0, overrides: dict = Non
                 {
                     "enabled": l.get("visible", True) and l.get("enabled", True),
                     "layer": l,
-                    "frame": frame,
-                    "direction": direction
+                    "frame": l.get("frame", frame),
+                    "direction": l.get("direction", direction)
                 } 
                 for l in layers
             ]
@@ -214,7 +214,6 @@ def render(item: dict, direction: int = 0, frame: int = 0, overrides: dict = Non
         layer_dir = config.get("direction", direction)
 
         state_name = layer.get("state")
-        sprite_rel_path = layer.get("sprite")
         
         # Разрешаем путь через штатный резолвер
         layer_file_path, resolved_state = SpriteLayerProcessor.resolve_layer_file(
@@ -230,7 +229,7 @@ def render(item: dict, direction: int = 0, frame: int = 0, overrides: dict = Non
             with Image.open(layer_file_path) as full_img:
                 layer_img = full_img.convert("RGBA")
         except Exception as e:
-            continue
+            logger.warning(f"Не удалось открыть текстуру слоя {layer_file_path}: {e}")
 
         fw, fh = layer_img.width, layer_img.height
 

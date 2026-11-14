@@ -1,10 +1,9 @@
-from pathlib import Path
 import os
 from PyQt6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QListWidget, QListWidgetItem,
     QLineEdit, QSplitter, QFileDialog, QMessageBox,
-    QGroupBox, QComboBox, QCheckBox, QColorDialog
+    QGroupBox, QComboBox, QCheckBox, QColorDialog, QSpinBox
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap, QColor
@@ -86,7 +85,7 @@ class LayerSelectorDialog(QDialog):
 
 
 class SceneBuilderDialog(QDialog):
-    """Главное окно сборщика сцены, полностью переведенное на единый render()."""
+    """Главное окно сборщика сцены с динамическим холстом и настройкой направления."""
     def __init__(self, items: list, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Сборщик изображений и сцен (Scene Builder)")
@@ -157,6 +156,15 @@ class SceneBuilderDialog(QDialog):
         state_layout.addWidget(self.state_combo)
         settings_layout.addLayout(state_layout)
 
+        # Направление (Direction)
+        dir_layout = QHBoxLayout()
+        dir_layout.addWidget(QLabel("Направление (Direction):"))
+        self.dir_spin = QSpinBox()
+        self.dir_spin.setRange(0, 7)  # Стандартный диапазон направлений (0-7 или 0-3)
+        self.dir_spin.valueChanged.connect(self.on_direction_changed)
+        dir_layout.addWidget(self.dir_spin)
+        settings_layout.addLayout(dir_layout)
+
         # Цвет
         color_layout = QHBoxLayout()
         color_layout.addWidget(QLabel("Цвет объекта:"))
@@ -208,6 +216,7 @@ class SceneBuilderDialog(QDialog):
                 "item": item,
                 "state": default_state,
                 "frame": 0,
+                "direction": 0,  # Динамическое направление для слоя
                 "enabled": True,
                 "custom_color": initial_color
             })
@@ -223,10 +232,11 @@ class SceneBuilderDialog(QDialog):
         for i, layer_data in enumerate(self.scene_layers):
             item_id = layer_data["item"].get("id", f"Слой {i+1}")
             state = layer_data["state"]
+            direction = layer_data.get("direction", 0)
             status = "👁" if layer_data["enabled"] else "🚫"
             color_info = f" [{layer_data['custom_color']}]" if layer_data["custom_color"] else ""
 
-            list_item = QListWidgetItem(f"{status} [{i+1}] {item_id} ({state}){color_info}")
+            list_item = QListWidgetItem(f"{status} [{i+1}] {item_id} (st: {state}, dir: {direction}){color_info}")
             self.layers_list_widget.addItem(list_item)
             
         self.layers_list_widget.blockSignals(False)
@@ -248,6 +258,7 @@ class SceneBuilderDialog(QDialog):
         item = layer_data["item"]
 
         self.state_combo.blockSignals(True)
+        self.dir_spin.blockSignals(True)
         self.enabled_checkbox.blockSignals(True)
 
         self.state_combo.clear()
@@ -258,6 +269,7 @@ class SceneBuilderDialog(QDialog):
         if state_idx >= 0:
             self.state_combo.setCurrentIndex(state_idx)
 
+        self.dir_spin.setValue(layer_data.get("direction", 0))
         self.enabled_checkbox.setChecked(layer_data["enabled"])
         
         c = layer_data["custom_color"]
@@ -267,6 +279,7 @@ class SceneBuilderDialog(QDialog):
             self.lbl_color_preview.setStyleSheet("border: 1px solid #555; border-radius: 4px; background-color: transparent;")
 
         self.state_combo.blockSignals(False)
+        self.dir_spin.blockSignals(False)
         self.enabled_checkbox.blockSignals(False)
 
     def on_state_changed(self, index):
@@ -277,6 +290,13 @@ class SceneBuilderDialog(QDialog):
                 self.scene_layers[row]["state"] = new_state
                 self.update_layers_ui()
                 self.render_scene()
+
+    def on_direction_changed(self, value):
+        row = self.layers_list_widget.currentRow()
+        if 0 <= row < len(self.scene_layers):
+            self.scene_layers[row]["direction"] = value
+            self.update_layers_ui()
+            self.render_scene()
 
     def on_enabled_toggled(self, checked):
         row = self.layers_list_widget.currentRow()
@@ -291,7 +311,6 @@ class SceneBuilderDialog(QDialog):
             current_color = self.scene_layers[row]["custom_color"] or "#ffffff"
             color = QColorDialog.getColor(QColor(current_color), self, "Выберите цвет предмета")
             if color.isValid():
-                # Используем .name(QColor.NameFormat.HexArgb) чтобы поддерживать формат с альфа-каналом (если выбран)
                 hex_color = color.name(QColor.NameFormat.HexArgb) if hasattr(QColor, 'NameFormat') else color.name()
                 self.scene_layers[row]["custom_color"] = hex_color
                 self.lbl_color_preview.setStyleSheet(f"border: 1px solid #555; border-radius: 4px; background-color: {hex_color};")
@@ -299,16 +318,27 @@ class SceneBuilderDialog(QDialog):
                 self.render_scene()
 
     def render_scene(self):
-        """Рендерит сцену, последовательно накладывая слои через единый render()."""
+        """Рендерит сцену с динамическим расчетом максимальных размеров холста и поддержкой direction."""
         native_w, native_h = 32, 32
         
-        # Определяем максимальный размер под базовый размер элементов сцены
+        # ИСПРАВЛЕНИЕ: Вычисляем максимальный размер холста по ВСЕМ активным слоям сцены
         if self.scene_layers:
-            first_item = self.scene_layers[0]["item"]
-            native_w = first_item.get("size", {}).get("x", 32) or 32
-            native_h = first_item.get("size", {}).get("y", 32) or 32
+            max_w = 32
+            max_h = 32
+            for layer_data in self.scene_layers:
+                if not layer_data["enabled"]:
+                    continue
+                item = layer_data["item"]
+                size = item.get("size", {})
+                w = size.get("x", 32) or 32
+                h = size.get("y", 32) or 32
+                if w > max_w:
+                    max_w = w
+                if h > max_h:
+                    max_h = h
+            native_w, native_h = max_w, max_h
 
-        # Создаем итоговый холст через PIL
+        # Создаем итоговый холст через PIL под максимальные размеры
         final_canvas = Image.new("RGBA", (native_w, native_h), (0, 0, 0, 0))
 
         for layer_data in self.scene_layers:
@@ -319,6 +349,7 @@ class SceneBuilderDialog(QDialog):
             current_state = layer_data["state"]
             custom_color = layer_data["custom_color"]
             frame_idx = layer_data["frame"]
+            direction = layer_data.get("direction", 0)  # ИСПРАВЛЕНИЕ: Берем реальный direction из слоя
 
             # Формируем layer_configs для передачи в единый метод render()
             sub_layers = item.get("layers", [])
@@ -327,12 +358,11 @@ class SceneBuilderDialog(QDialog):
                     "enabled": True,
                     "layer": {"state": current_state, "sprite": None, "color": custom_color},
                     "frame": frame_idx,
-                    "direction": 0
+                    "direction": direction
                 }]
             else:
                 layer_configs = []
                 for l in sub_layers:
-                    # Переопределяем стейт текущего слоя на выбранный в UI
                     sub_l = l.copy()
                     sub_l["state"] = current_state
                     if custom_color:
@@ -342,7 +372,7 @@ class SceneBuilderDialog(QDialog):
                         "enabled": sub_l.get("visible", True) and sub_l.get("enabled", True),
                         "layer": sub_l,
                         "frame": frame_idx,
-                        "direction": 0
+                        "direction": direction
                     })
 
             overrides = {
@@ -350,17 +380,26 @@ class SceneBuilderDialog(QDialog):
                 "color": custom_color
             }
 
-            # Вызываем единый рендерер из sprite_processor
-            rendered_layer_img = render(item, direction=0, frame=frame_idx, overrides=overrides)
+            # Вызываем единый рендерер из sprite_processor с правильным direction
+            rendered_layer_img = render(item, direction=direction, frame=frame_idx, overrides=overrides)
+            
             if not rendered_layer_img.size == (0, 0):
-                final_canvas = Image.alpha_composite(final_canvas, rendered_layer_img)
+                # Если размеры отрендеренного слоя отличаются от итогового холста, центрируем его
+                if rendered_layer_img.size != final_canvas.size:
+                    temp_canvas = Image.new("RGBA", final_canvas.size, (0, 0, 0, 0))
+                    paste_x = (final_canvas.width - rendered_layer_img.width) // 2
+                    paste_y = (final_canvas.height - rendered_layer_img.height) // 2
+                    temp_canvas.paste(rendered_layer_img, (max(0, paste_x), max(0, paste_y)))
+                    final_canvas = Image.alpha_composite(final_canvas, temp_canvas)
+                else:
+                    final_canvas = Image.alpha_composite(final_canvas, rendered_layer_img)
 
         # Конвертируем PIL Image в QImage -> QPixmap через стандартный метод
         q_img = pil_to_qimage(final_canvas)
         canvas_pixmap = QPixmap.fromImage(q_img)
         self.current_rendered_canvas = canvas_pixmap
 
-        # Масштабируем для отображения в QLabel с сохранением пиксельной четкости (FastTransformation)
+        # Масштабируем для отображения в QLabel с сохранением пиксельной четкости
         display_pixmap = canvas_pixmap.scaled(
             256, 256,
             Qt.AspectRatioMode.KeepAspectRatio,
@@ -398,11 +437,6 @@ class SceneBuilderDialog(QDialog):
 
         file_path, _ = QFileDialog.getSaveFileName(self, "Сохранить сборку", "composite_scene.png", "PNG Images (*.png)")
         if file_path:
-            # Сохранение итогового холста
-            exported = self.current_rendered_canvas.scaled(
-                256, 256, 
-                Qt.AspectRatioMode.KeepAspectRatio, 
-                Qt.TransformationMode.FastTransformation
-            )
-            exported.save(file_path, "PNG")
+            # Сохранение итогового холста в исходном разрешении
+            self.current_rendered_canvas.save(file_path, "PNG")
             QMessageBox.information(self, "Успех", f"Сцена успешно сохранена:\n{file_path}")

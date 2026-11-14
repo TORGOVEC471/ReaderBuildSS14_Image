@@ -3,24 +3,27 @@ import json
 from pathlib import Path
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
-from config import settings
+from config import settings, BASE_DIR
 from logger import logger
 
 from .sprite_processor import render
 
-# Папка, куда сохраняются итоговые .png изображения
-if not settings.path_saves or settings.path_saves == Path("."):
-    OUTPUT_DIR = Path(__file__).parent / "Saves/images"
-else:
-    OUTPUT_DIR = Path(settings.path_saves) / "Saves/images"
 
-if not OUTPUT_DIR.exists():
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+def output_dir():
+    # Папка, куда сохраняются итоговые .png изображения
+    # settings.path_saves уже гарантированно возвращает абсолютный путь (благодаря config.py).
+    out_dir = settings.path_saves / "Saves" / "images"
 
-DEFAULT_SOURCE_DIR = Path(__file__).parent
+    if not out_dir.exists():
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+    return out_dir
+
+# Источник по умолчанию теперь тоже привязан к корневой папке проекта/exe, а не к временной _MEIPASS
+DEFAULT_SOURCE_DIR = BASE_DIR
 
 
-def build_composite_image(item: dict, mode: str = "Original", direction: int = 0, frame: int = 0) -> Image.Image | None:
+def build_composite_image(item: dict, direction: int = 0, frame: int = 0) -> Image.Image | None:
     """Собирает слои предмета в единое изображение PIL."""
     if not item or not item.get("layers"):
         return None
@@ -45,10 +48,25 @@ def save_sprite(
     if item:
         tile_w = item.get("size", {}).get("x", 32) or 32
         tile_h = item.get("size", {}).get("y", 32) or 32
-        image = build_composite_image(item, mode)
+        image = build_composite_image(item)
         
         copyright_data = item.get("copyright", "")
         license_data = item.get("license", "")
+
+        # Страховка: если в item копирайта нет, но указан путь к текстуре/файлу, попробуем поискать meta.json
+        if not copyright_data and item.get("path"):
+            texture_path = Path(item.get("path"))
+            json_path = texture_path.parent / "meta.json"
+            if json_path.exists():
+                try:
+                    with open(json_path, "r", encoding="utf-8-sig") as f:
+                        meta_data = json.load(f)
+                        if not copyright_data:
+                            copyright_data = meta_data.get("copyright", "")
+                        if not license_data:
+                            license_data = meta_data.get("license", "")
+                except Exception as e:
+                    logger.warning(f"Failed to read metadata for composite item from {json_path}: {e}")
 
     # Стандартный режим отрисовки одного спрайта
     if image is None:
@@ -102,7 +120,7 @@ def save_sprite(
     if not output_name:
         output_name = f"{png_path.parent.name}-{png_path.stem}"
 
-    output_filepath = OUTPUT_DIR / f"{output_name}.png"
+    output_filepath = output_dir() / f"{output_name}.png"
 
     try:
         metadata = PngInfo()
@@ -165,7 +183,7 @@ def process_path(target_path: Path | str, name_file: str = None, mode: str = "Or
     elif target_path.is_dir():
         png_files = sorted(target_path.glob("**/*.png"))
         for png_file in png_files:
-            if OUTPUT_DIR in png_file.parents:
+            if output_dir() in png_file.parents:
                 continue
             save_sprite(png_file)
 

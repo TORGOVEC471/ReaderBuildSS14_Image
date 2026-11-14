@@ -9,20 +9,22 @@ from PIL import Image
 from typing import Literal
 from logger import logger
 
-from config import settings
-from img_tools.sprite_processor import SpriteLayerProcessor, render
+from config import settings, BASE_DIR
+from img_tools.sprite_processor import SpriteLayerProcessor
 
 
-# Папка, куда сохраняются итоговые анимации
-if not settings.path_saves or settings.path_saves == Path("."):
-    OUTPUT_DIR = Path(__file__).parent / "Saves/animations"
-else:
-    OUTPUT_DIR = Path(settings.path_saves) / "Saves/animations"
+def output_dir():
+    # Папка, куда сохраняются итоговые анимации
+    # settings.path_saves уже гарантированно возвращает абсолютный путь (благодаря config.py).
+    out_dir = settings.path_saves / "Saves" / "animations"
 
-if not OUTPUT_DIR.exists():
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    if not out_dir.exists():
+        out_dir.mkdir(parents=True, exist_ok=True)
 
-DEFAULT_SOURCE_DIR = Path(__file__).parent
+    return out_dir
+
+# Источник по умолчанию теперь тоже привязан к корневой папке проекта/exe, а не к временной _MEIPASS
+DEFAULT_SOURCE_DIR = BASE_DIR
 
 def parse_state_delays(state_data: dict, direction: int = 0) -> tuple[list, int]:
     """Извлекает задержки и количество кадров для конкретного направления из структуры state."""
@@ -108,7 +110,7 @@ def save_anim(
     if not durations_ms:
         durations_ms = [200] * len(resized_frames)
 
-    output_filepath = OUTPUT_DIR / f"{name}.{format}"
+    output_filepath = output_dir() / f"{name}.{format}"
     try:
         logger.info(f"Saving {output_filepath}")
         if format == "gif":
@@ -260,7 +262,7 @@ def process_composite_anim(item: dict, name_file: str, format: Literal["gif", "w
 
     # Собираем все уникальные точки смены кадров по времени от всех слоев
     timeline_points = {0}
-    for info, cycle_dur in zip(layer_infos, cycle_durations):
+    for info, cycle_dur in zip(layer_infos, cycle_durations, strict=True):
         current_t = 0
         # Проходим циклы до общей длительности total_duration
         repeats = total_duration // cycle_dur if cycle_dur > 0 else 1
@@ -341,7 +343,7 @@ def process_composite_anim(item: dict, name_file: str, format: Literal["gif", "w
 
     metadata_text = f"{name_file}\n{', '.join(copyrights)} License: {', '.join(licenses)}"
 
-    output_filepath = OUTPUT_DIR / f"{name_file}.{format}"
+    output_filepath = output_dir() / f"{name_file}.{format}"
     logger.info(f"Saving composite animation: {output_filepath}")
 
     try:
@@ -462,7 +464,7 @@ def main():
         elif target_path.is_dir():
             json_files = sorted(target_path.glob("**/*.json"))
             for json_file in json_files:
-                if OUTPUT_DIR in json_file.parents:
+                if output_dir() in json_file.parents:
                     continue
                 process_json_file(json_file)
 
