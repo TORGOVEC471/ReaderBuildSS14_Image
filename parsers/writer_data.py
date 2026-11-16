@@ -109,6 +109,7 @@ def save_data_build(target_dir_yml: Path = None, target_dir_ftl: Path = None):
                 "states": states,
                 "layers": entity.get('layers'),
                 "size": size,
+                "color": entity.get('color'),
                 "copyright": copyright_data,   # <--- Добавлено
                 "license": license_data        # <--- Добавлено
             })

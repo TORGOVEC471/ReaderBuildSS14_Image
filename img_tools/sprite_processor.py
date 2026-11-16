@@ -21,7 +21,15 @@ class SpriteLayerProcessor:
         # Проверяем, есть ли resources_dir родитель для пути
         resources_dir = next((p for p in Path(item.get("file", "")).parents if p.name == "Resources"), None)
         if sprite_rel and resources_dir:
-            ldir = base_textures_path / sprite_rel
+            # Очищаем ведущие слэши, чтобы pathlib не считал путь абсолютным
+            clean_sprite = sprite_rel.lstrip("/\\")
+            
+            # Если путь начинается с "textures/", убираем его, чтобы избежать дублирования,
+            # так как base_textures_path уже заканчивается на "Textures"
+            if clean_sprite.lower().startswith("textures/"):
+                clean_sprite = clean_sprite[9:] # длина "textures/" равна 9
+                
+            ldir = base_textures_path / clean_sprite
         else:
             ldir = Path(item.get("path", ""))
         
@@ -252,7 +260,7 @@ def render(item: dict, direction: int = 0, frame: int = 0, overrides: dict = Non
             layer_img = layer_img.crop((col * native_w, row * native_h, (col + 1) * native_w, (row + 1) * native_h))
 
         # Применение цвета (tint)
-        color_hex = layer.get("color") or overrides.get("color")
+        color_hex = layer.get("color") or overrides.get("color") or item.get("color")
         if color_hex:
             layer_img = apply_tint_to_image(layer_img, color_hex)
 

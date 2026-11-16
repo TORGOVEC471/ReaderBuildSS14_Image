@@ -65,6 +65,8 @@ def extract_sprite_and_layers(entity_dict):
     local_sprite = None
     local_state = None
     local_layers = []
+    local_color = None
+    local_color_LightBulb = None
 
     local_icon_sprite = None
     local_icon_state = None
@@ -82,6 +84,8 @@ def extract_sprite_and_layers(entity_dict):
                 local_state = comp.get('state')
             elif comp.get('icon'):
                 local_state = comp.get('icon')
+            if comp.get('color'):
+                local_color = comp.get('color')
 
             layers = comp.get('layers')
             if isinstance(layers, list) and layers:
@@ -99,7 +103,11 @@ def extract_sprite_and_layers(entity_dict):
             if comp.get('state'):
                 local_icon_state = comp.get('state')
 
-    return local_sprite, local_state, local_layers, local_icon_sprite, local_icon_state
+        elif comp_type == 'LightBulb':
+            if comp.get('color'):
+                local_color = comp.get('color')
+
+    return local_sprite, local_state, local_layers, local_icon_sprite, local_icon_state, local_color
 
 
 def parse_suffixes(raw_suffix):
@@ -286,13 +294,14 @@ def process_prototypes(directory_path, db_path=None, build_id="default"):
         final_sprite = None
         final_state = None
         final_layers = []
+        final_color = None
 
         final_icon_sprite = None
         final_icon_state = None
 
         for eid in dedup_chain:
             entity_data = entities_db[eid]['raw']
-            local_sprite, local_state, local_layers, local_icon_sprite_local, local_icon_state_local = extract_sprite_and_layers(entity_data)
+            local_sprite, local_state, local_layers, local_icon_sprite_local, local_icon_state_local, local_color = extract_sprite_and_layers(entity_data)
 
             if local_sprite:
                 final_sprite = local_sprite
@@ -300,6 +309,8 @@ def process_prototypes(directory_path, db_path=None, build_id="default"):
                 final_state = local_state
             if local_layers:
                 final_layers = local_layers
+            if local_color:
+                final_color = local_color
 
             if local_icon_sprite_local:
                 final_icon_sprite = local_icon_sprite_local
@@ -314,7 +325,7 @@ def process_prototypes(directory_path, db_path=None, build_id="default"):
                 'state': final_state
             }]
 
-        return final_sprite, final_state, processed_layers, final_icon_sprite, final_icon_state
+        return final_sprite, final_state, processed_layers, final_icon_sprite, final_icon_state, final_color
 
     # --- ЭТАП 2: Сборка результатов ---
     results = {}
@@ -326,7 +337,7 @@ def process_prototypes(directory_path, db_path=None, build_id="default"):
             continue
 
         chain = get_ancestor_chain(entity_id)
-        sprite_path, sprite_state, layers, icon_sprite, icon_state = resolve_entity_sprite_and_layers(entity_id)
+        sprite_path, sprite_state, layers, icon_sprite, icon_state, color = resolve_entity_sprite_and_layers(entity_id)
 
         if file_name not in results:
             results[file_name] = []
@@ -337,6 +348,7 @@ def process_prototypes(directory_path, db_path=None, build_id="default"):
             'sprite': sprite_path,
             'state': sprite_state,
             'layers': layers,
+            'color': color,
             'parent': raw_entity.get('parent'),
             'parents_chain': chain[:-1] if chain else []
         })
