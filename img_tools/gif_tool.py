@@ -51,7 +51,7 @@ def save_anim(
         delays: list,
         image_copyright: str,
         image_license: str,
-        format: Literal["gif", "webp", "apng"] = "gif",
+        format: Literal["gif", "webp", "apng"] = "webp",
         direction: int = 0,
         directions_count: int = 1,
         frame_count: int = 1
@@ -169,7 +169,12 @@ def save_anim(
         logger.error(e)
 
 
-def process_composite_anim(item: dict, name_file: str, format: Literal["gif", "webp", "apng"] = "gif", layer_configs: list = None):
+def process_composite_anim(
+        item: dict,
+        name_file: str,
+        format: Literal["gif", "webp", "apng"] = "webp",
+        layer_configs: list = None
+    ):
     """Собирает многослойную анимацию с синхронизацией слоев по времени."""
     base_textures_path = SpriteLayerProcessor.get_base_textures_path(item)
     
@@ -366,32 +371,64 @@ def process_composite_anim(item: dict, name_file: str, format: Literal["gif", "w
     try:
         if format == "gif":
             timeline_frames[0].save(
-                output_filepath, format='GIF', optimize=True,
-                append_images=timeline_frames[1:], disposal=2, save_all=True,
-                duration=durations_ms, loop=0, comment=metadata_text
+                output_filepath,
+                format='GIF',
+                optimize=True,
+                append_images=timeline_frames[1:],
+                disposal=2,
+                save_all=True,
+                duration=durations_ms,
+                loop=0,
+                comment=metadata_text
             )
         elif format == "webp":
+            # Формируем XML-структуру XMP в байтах
+            xmp_data = f"""<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+            <x:xmpmeta xmlns:x="adobe:ns:meta/">
+                <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+                <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <dc:title>{name_file}</dc:title>
+                <dc:rights>{copyrights}</dc:rights>
+                <dc:description>License: {licenses}</dc:description>
+                </rdf:Description>
+                </rdf:RDF>
+            </x:xmpmeta>
+            <?xpacket end="w"?>""".encode('utf-8')
+
             timeline_frames[0].save(
-                output_filepath, format='WEBP', lossless=True,
-                append_images=timeline_frames[1:], save_all=True,
-                duration=durations_ms, loop=0, comment=metadata_text
+                output_filepath,
+                format='WEBP',
+                lossless=True,
+                append_images=timeline_frames[1:],
+                save_all=True,
+                duration=durations_ms,
+                loop=0,
+                xmp=xmp_data
             )
         elif format == "apng":
+            # APNG сохраняется через формат PNG с флагами save_all и append_images
+            pnginfo = PngInfo()
+            pnginfo.add_text("Comment", metadata_text)
+
             timeline_frames[0].save(
-                output_filepath, format='PNG',
-                append_images=timeline_frames[1:], save_all=True,
-                duration=durations_ms, loop=0, comment=metadata_text
+                output_filepath,
+                format='PNG',
+                append_images=timeline_frames[1:],
+                save_all=True,
+                duration=durations_ms,
+                loop=0,
+                pnginfo=pnginfo
             )
         return output_filepath
     except Exception as e:
-        logger.error({e})
+        logger.error(e)
 
 
 def process_json_file(
         json_file: Path | str,
         target_state: str = None,
         name_file: str = "",
-        format: Literal["gif", "webp", "apng"] = "gif",
+        format: Literal["gif", "webp", "apng"] = "webp",
         item: dict = None,
         layer_configs: list = None
     ) -> None:
