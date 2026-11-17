@@ -3,15 +3,63 @@ from PyQt6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QListWidget, QListWidgetItem,
     QLineEdit, QSplitter, QFileDialog, QMessageBox,
-    QGroupBox, QComboBox, QCheckBox, QColorDialog, QSpinBox
+    QGroupBox, QComboBox, QCheckBox, QColorDialog,
+    QSpinBox
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPixmap, QColor
+from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import QPixmap, QColor, QIcon
 
 from PIL import Image
 from img_tools.sprite_processor import render
 from GUI.qt_image_tool import pil_to_qimage
+from GUI.animator import AnimationBuilderDialog
 
+_icon_cache = {}
+
+def item_icon(item: dict, size: int = 48) -> QIcon:
+    """Превью предмета, собранное из всех его слоёв (с кэшем)."""
+    key = (item.get("id"), size)
+    if key not in _icon_cache:
+        pil_img = render(item)
+        pix = QPixmap.fromImage(pil_to_qimage(pil_img)).scaled(
+            size, size, Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.FastTransformation)
+        _icon_cache[key] = QIcon(pix)
+    return _icon_cache[key]
+
+
+def build_layer_configs(layer_data: dict) -> list:
+    """Конфиги подслоёв предмета: свои state/color сохраняются, как в ImageDetailDialog."""
+    item = layer_data["item"]
+    state = layer_data["state"]
+    color = layer_data.get("custom_color") or ""
+    force_state = layer_data.get("force_state", False)
+    frame = layer_data.get("frame", 0)
+    direction = layer_data.get("direction", 0)
+
+    sub_layers = item.get("layers", [])
+    if not sub_layers:
+        return [{
+            "enabled": True,
+            "layer": {"state": state, "sprite": None, **({"color": color} if color else {})},
+            "frame": frame,
+            "direction": direction,
+        }]
+
+    configs = []
+    for l in sub_layers:
+        sub_l = dict(l)
+        if force_state or not sub_l.get("state"):
+            sub_l["state"] = state
+        if color:                      # красим только если пользователь выбрал цвет
+            sub_l["color"] = color
+        configs.append({
+            "enabled": sub_l.get("visible", True) and sub_l.get("enabled", True),
+            "layer": sub_l,
+            "frame": frame,
+            "direction": direction,
+        })
+    return configs
 
 class LayerSelectorDialog(QDialog):
     """Окно выбора элемента из базы данных."""
@@ -33,6 +81,7 @@ class LayerSelectorDialog(QDialog):
         # Список элементов
         self.list_widget = QListWidget()
         self.list_widget.itemDoubleClicked.connect(self.on_item_double_clicked)
+        self.list_widget.setIconSize(QSize(48, 48))
         layout.addWidget(self.list_widget)
 
         # Кнопки
@@ -57,6 +106,7 @@ class LayerSelectorDialog(QDialog):
             display_text = f"{item_id}" + (f" ({name_ftl})" if name_ftl else "")
 
             list_item = QListWidgetItem(display_text)
+            list_item.setIcon(item_icon(item))
             list_item.setData(Qt.ItemDataRole.UserRole, item)
             self.list_widget.addItem(list_item)
 
@@ -96,6 +146,9 @@ class SceneBuilderDialog(QDialog):
         self.scene_layers = []
         self.current_rendered_canvas = QPixmap()
 
+        self.current_pil_canvas = Image.new("RGBA", (32, 32))
+        self.anim_dialog = None
+
         layout = QHBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
@@ -113,6 +166,14 @@ class SceneBuilderDialog(QDialog):
         btn_export.setStyleSheet("background-color: #1abc9c; color: white; font-weight: bold; padding: 8px;")
         btn_export.clicked.connect(self.export_scene)
         left_layout.addWidget(btn_export)
+
+        btn_to_anim = QPushButton("🎞 Кадр в анимацию")
+        btn_to_anim.clicked.connect(self.add_frame_to_animation)
+        left_layout.addWidget(btn_to_anim)
+
+        btn_open_anim = QPushButton("🎬 Окно анимаций")
+        btn_open_anim.clicked.connect(self.open_animator)
+        left_layout.addWidget(btn_open_anim)
 
         splitter.addWidget(left_widget)
 
@@ -183,6 +244,11 @@ class SceneBuilderDialog(QDialog):
         self.enabled_checkbox.toggled.connect(self.on_enabled_toggled)
         settings_layout.addWidget(self.enabled_checkbox)
 
+        # Чекбокс "принудительно применить состояние ко всем подслоям"
+        self.force_state_cb = QCheckBox("Состояние для всех подслоёв (игнорировать свои)")
+        self.force_state_cb.toggled.connect(self.on_force_state_toggled)
+        settings_layout.addWidget(self.force_state_cb)
+
         right_layout.addWidget(self.settings_group)
         self.settings_group.setEnabled(False)
 
@@ -191,6 +257,12 @@ class SceneBuilderDialog(QDialog):
 
         layout.addWidget(splitter)
         self.render_scene()
+
+    def on_force_state_toggled(self, checked):
+        row = self.layers_list_widget.currentRow()
+        if 0 <= row < len(self.scene_layers):
+            self.scene_layers[row]["force_state"] = checked
+            self.render_scene()
 
     def get_item_states(self, item: dict) -> list:
         raw_states = item.get("states")
@@ -206,19 +278,14 @@ class SceneBuilderDialog(QDialog):
             states = self.get_item_states(item)
             default_state = "equipped-INNERCLOTHING" if "equipped-INNERCLOTHING" in states else (states[0] if states else "default")
 
-            initial_color = ""
-            for sub_l in item.get("layers", []):
-                if "color" in sub_l:
-                    initial_color = sub_l["color"]
-                    break
-
             self.scene_layers.append({
                 "item": item,
                 "state": default_state,
                 "frame": 0,
-                "direction": 0,  # Динамическое направление для слоя
+                "direction": 0,
                 "enabled": True,
-                "custom_color": initial_color
+                "custom_color": "",       # было: initial_color
+                "force_state": False,
             })
             self.update_layers_ui()
             self.layers_list_widget.setCurrentRow(len(self.scene_layers) - 1)
@@ -237,6 +304,7 @@ class SceneBuilderDialog(QDialog):
             color_info = f" [{layer_data['custom_color']}]" if layer_data["custom_color"] else ""
 
             list_item = QListWidgetItem(f"{status} [{i+1}] {item_id} (st: {state}, dir: {direction}){color_info}")
+            list_item.setIcon(item_icon(layer_data["item"], 32))
             self.layers_list_widget.addItem(list_item)
             
         self.layers_list_widget.blockSignals(False)
@@ -260,6 +328,10 @@ class SceneBuilderDialog(QDialog):
         self.state_combo.blockSignals(True)
         self.dir_spin.blockSignals(True)
         self.enabled_checkbox.blockSignals(True)
+
+        self.force_state_cb.blockSignals(True)
+        self.force_state_cb.setChecked(layer_data.get("force_state", False))
+        self.force_state_cb.blockSignals(False)
 
         self.state_combo.clear()
         self.state_combo.addItems(self.get_item_states(item))
@@ -346,53 +418,26 @@ class SceneBuilderDialog(QDialog):
                 continue
 
             item = layer_data["item"]
-            current_state = layer_data["state"]
-            custom_color = layer_data["custom_color"]
-            frame_idx = layer_data["frame"]
-            direction = layer_data.get("direction", 0)  # ИСПРАВЛЕНИЕ: Берем реальный direction из слоя
-
-            # Формируем layer_configs для передачи в единый метод render()
-            sub_layers = item.get("layers", [])
-            if not sub_layers:
-                layer_configs = [{
-                    "enabled": True,
-                    "layer": {"state": current_state, "sprite": None, "color": custom_color},
-                    "frame": frame_idx,
-                    "direction": direction
-                }]
-            else:
-                layer_configs = []
-                for l in sub_layers:
-                    sub_l = l.copy()
-                    sub_l["state"] = current_state
-                    if custom_color:
-                        sub_l["color"] = custom_color
-
-                    layer_configs.append({
-                        "enabled": sub_l.get("visible", True) and sub_l.get("enabled", True),
-                        "layer": sub_l,
-                        "frame": frame_idx,
-                        "direction": direction
-                    })
-
+            render_item = {**item, "state": layer_data["state"]}   # state как fallback для render/resolve
             overrides = {
-                "layer_configs": layer_configs,
-                "color": custom_color
+                "layer_configs": build_layer_configs(layer_data),
+                "color": layer_data.get("custom_color") or None,
             }
+            img = render(render_item,
+                        direction=layer_data.get("direction", 0),
+                        frame=layer_data.get("frame", 0),
+                        overrides=overrides)
 
-            # Вызываем единый рендерер из sprite_processor с правильным direction
-            rendered_layer_img = render(item, direction=direction, frame=frame_idx, overrides=overrides)
-            
-            if not rendered_layer_img.size == (0, 0):
-                # Если размеры отрендеренного слоя отличаются от итогового холста, центрируем его
-                if rendered_layer_img.size != final_canvas.size:
-                    temp_canvas = Image.new("RGBA", final_canvas.size, (0, 0, 0, 0))
-                    paste_x = (final_canvas.width - rendered_layer_img.width) // 2
-                    paste_y = (final_canvas.height - rendered_layer_img.height) // 2
-                    temp_canvas.paste(rendered_layer_img, (max(0, paste_x), max(0, paste_y)))
-                    final_canvas = Image.alpha_composite(final_canvas, temp_canvas)
-                else:
-                    final_canvas = Image.alpha_composite(final_canvas, rendered_layer_img)
+            if img.size == (0, 0):
+                continue
+            if img.size != final_canvas.size:
+                tmp = Image.new("RGBA", final_canvas.size, (0, 0, 0, 0))
+                tmp.paste(img, (max(0, (final_canvas.width - img.width) // 2),
+                                max(0, (final_canvas.height - img.height) // 2)))
+                img = tmp
+            final_canvas = Image.alpha_composite(final_canvas, img)
+
+        self.current_pil_canvas = final_canvas      # понадобится для аниматора и экспорта
 
         # Конвертируем PIL Image в QImage -> QPixmap через стандартный метод
         q_img = pil_to_qimage(final_canvas)
@@ -438,5 +483,17 @@ class SceneBuilderDialog(QDialog):
         file_path, _ = QFileDialog.getSaveFileName(self, "Сохранить сборку", "composite_scene.png", "PNG Images (*.png)")
         if file_path:
             # Сохранение итогового холста в исходном разрешении
-            self.current_rendered_canvas.save(file_path, "PNG")
+            self.current_pil_canvas.save(file_path, "PNG")
             QMessageBox.information(self, "Успех", f"Сцена успешно сохранена:\n{file_path}")
+
+    def open_animator(self):
+        if self.anim_dialog is None:
+            self.anim_dialog = AnimationBuilderDialog(self)
+        self.anim_dialog.show()
+        self.anim_dialog.raise_()
+        return self.anim_dialog
+
+    def add_frame_to_animation(self):
+        dlg = self.open_animator()
+        n = len(dlg.frames) + 1
+        dlg.add_frame(self.current_pil_canvas.copy(), f"scene_{n}")

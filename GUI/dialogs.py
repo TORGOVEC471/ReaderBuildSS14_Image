@@ -671,10 +671,12 @@ class ImageDetailDialog(QDialog):
         )
 
         # Заполняем скрываемый блок copyright и лицензией
-        copyright_data = self.item.get("copyright", "")
-        license_data = self.item.get("license", "")
+        copyright_data = self.item.get("copyright", "") or ""
+        license_data = self.item.get("license", "") or ""
 
         def make_links_html(text):
+            if not text:  # Защита на случай, если пришло None или пустая строка
+                return ""
             url_pattern = re.compile(r'((https?://[^/]+/[^/]+)/([^/\s]+)([^\s]*))')
             return url_pattern.sub(r'<a href="\1">Github/\3</a>', text)
 
@@ -686,11 +688,13 @@ class ImageDetailDialog(QDialog):
         )
 
     def on_yml_clicked(self):
+        logger.info(fr'Открываем YML: "{self.item.get("file", "")}"')
         url = QUrl.fromLocalFile(self.item.get("file", ""))
         if url:
             QDesktopServices.openUrl(url)
 
     def on_rsi_clicked(self):
+        logger.info(fr'Открываем RSI: "{self.item.get("path", "")}"')
         url = QUrl.fromLocalFile(f"{self.item.get('path', '')}")
         if url:
             QDesktopServices.openUrl(url)
